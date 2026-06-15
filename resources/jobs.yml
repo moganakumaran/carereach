@@ -100,10 +100,20 @@ resources:
           sql_task:
             warehouse_id: ${var.warehouse_id}
             file: {path: ../src/pipelines/gold/district_map.sql}
+        - task_key: build_region_signals
+          depends_on: [{task_key: build_district_desert}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/gold/region_signals.sql}
         - task_key: assert_gold
-          depends_on: [{task_key: build_district_map}]
+          depends_on: [{task_key: build_district_map}, {task_key: build_region_signals}]
           sql_task:
             warehouse_id: ${var.warehouse_id}
             file: {path: ../tests/gold_assertions.sql}
+        - task_key: assert_region_signals
+          depends_on: [{task_key: build_region_signals}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../tests/region_signals_assertions.sql}
       queue:
         enabled: true
