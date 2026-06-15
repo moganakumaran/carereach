@@ -1,0 +1,229 @@
+# Phase 4–8 Follow-up Prompts (Medical Desert Planner)
+
+Paste these one at a time into your CLI coding assistant, in order, only after the
+previous phase's checkpoint is green. They assume `AGENTS.md` is in the repo root
+and Phases 0–3 are complete. Each prompt re-states the operating rules so the
+assistant behaves even in a fresh session.
+
+> Before Phase 4, install the Databricks agent skills (Phase 0.5 in the runbook):
+> Claude Code `databricks experimental aitools skills install`, or Cursor
+> `/add-plugin databricks-skills`. Check the live menu with `npx skills add
+> databricks/databricks-agent-skills --list` — the first-party set is thin today, so
+> the bigger win is the project-specific skill in `.claude/skills/medical-desert/`
+> that encodes the desert-score contract and the fan-out/asterisk gotchas.
+
+---
+
+## Phase 4 — Silver: structure, extract, spatialise
+
+```
+Read AGENTS.md first. We are on Phase 4. Phases 0–3 are green.
+
+Operating rules: work this phase only, then run the checkpoint and STOP. No
+destructive commands without asking. Everything under Unity Catalog. Use the
+bundle. Verify uncertain CLI/schema details against `databricks bundle schema`.
+
+Build the silver layer in src/pipelines/ and wire it into resources/jobs.yml as a
+`silver_transform` job:
+  1. AI extraction: use ai_query/ai_extract to turn the free-text description,
+     capability, equipment, procedure fields into typed capability flags
+     (does_csection, has_icu, obstetric_services, plus any clearly supported
+     others), each with a confidence score. Store in mdp.silver.facility_claims.
+     These are CLAIMS, not facts.
+  2. Build a Vector Search index over description/capability/equipment.
+  3. Clean enrichment: deduplicate mdp.bronze.pincode to district grain BEFORE
+     any join; snake_case the NFHS columns; map '*' to NULL (never 0); flag
+     parenthesised small-sample estimates as low-confidence.
+  4. Spatial assignment: assign each facility to a district via
+     ST_Contains(polygon, ST_Point(lon,lat)); flag rows missing coordinates as
+     geo_inferred = true. Do NOT drop them.
+Then `databricks bundle run silver_transform -t dev`.
+
+CHECKPOINT 4 — report all of these with output:
+  - Extraction quality: print 30 random facilities with their extracted flags so
+    I can hand-label; we need >= ~80% agreement before continuing.
+  - No fan-out: silver facility row count is still ~10,000 after joins.
+  - Geocoding coverage: report % geo_inferred; confirm those rows are flagged.
+  - Vector index status is ONLINE and returns sensible neighbours for a test query.
+STOP and report.
+```
+
+---
+
+## Phase 5 — Gold: unified facility + district desert score
+
+```
+Read AGENTS.md first. We are on Phase 5. Phase 4 is green.
+
+Same operating rules: this phase only, checkpoint then STOP, no destructive
+commands without asking, Unity Catalog + bundle.
+
+Build the gold layer (gold_build job in resources/jobs.yml):
+  1. mdp.gold.facility — one row per facility: facility_id, district_id,
+     capability flags + per-flag confidence, geo_inferred, evidence_ref
+     (pointer to source record + the exact claim sentence).
+  2. mdp.gold.district_desert — one row per district with verified_coverage,
+     burden_score, accessibility_score, desert_score, and the counts behind each.
+     Use the desert-score formula and weights from AGENTS.md. verified_coverage
+     counts ONLY facilities whose relevant capability is verified.
+  3. Add data-quality expectations / SQL tests in tests/ that fail loudly on
+     NULL desert scores or fan-out.
+Then `databricks bundle run gold_build -t dev`.
+
+CHECKPOINT 5 — report:
+  - Face validity: list the 5 worst-desert districts; I will sanity-check them
+    against known high-burden NFHS-5 districts.
+  - Confirm coverage uses verified facilities only (show the join logic).
+  - DQ expectations/tests pass; no NULL desert scores where data exists.
+STOP and report.
+```
+
+---
+
+## Phase 6 — Agents (Agent Bricks Supervisor + specialists)
+
+```
+Read AGENTS.md first. We are on Phase 6. Phase 5 is green.
+
+Same operating rules. This is the agentic core — go in this sub-order and treat
+each as its own mini-checkpoint:
+
+  1. Genie Space over mdp.gold.* — confirm it answers natural-language count
+     questions correctly.
+  2. Register the geo + desert-score logic as Unity Catalog functions the agent
+     can call (mdp.gold.fn_*).
+  3. Capability-verification agent (mdp_verify_agent): author with the MLflow
+     ResponsesAgent interface; it uses Vector Search + AI classification and
+     returns a credibility judgement + confidence for "can facility X do
+     service Y?". Log and register it in Unity Catalog.
+  4. Supervisor Agent (Agent Bricks): connect Genie + mdp_verify_agent + the UC
+     functions + Foundation Model API web search + MCP enrichment. No hard-coded
+     routing — steer with instructions.
+
+Install SDKs with uv: mlflow>=3.1.3, databricks-agents>=1.1.0, databricks-sdk.
+Prefer deploying the agent on Databricks Apps (Phase 8); a Model Serving endpoint
+is fine for interim testing.
+
+CHECKPOINT 6 — report:
+  - MLflow eval on a ~15-pair golden Q&A set meets the threshold we set.
+  - Trace for "where to deploy a maternal unit in Bihar?" shows the supervisor
+    calling Genie + geo tools + verify agent in a sensible order.
+  - Verification precision: spot-check 20 claim judgements; low false-positive rate.
+  - All agents and functions registered in Unity Catalog with correct grants.
+STOP and report.
+```
+
+---
+
+## Phase 7 — Lakebase (state and persistence)
+
+```
+Read AGENTS.md first. We are on Phase 7. Phase 6 is green.
+
+Same operating rules. Confirm Lakebase is enabled in this workspace/region first;
+if not, tell me and stop.
+
+In resources/lakebase.yml define a postgres_project, a postgres_branch, and a
+postgres_endpoint. Create tables for sessions, scenarios, evidence_trail, and
+reviewer_overrides (DDL applied via a db_migrate job).
+  `databricks bundle deploy -t dev`
+  `databricks bundle run db_migrate -t dev`
+
+CHECKPOINT 7 — report:
+  - Write a scenario, read it back — round-trips correctly.
+  - Restart the session/app; the saved scenario is still retrievable.
+  - An evidence_trail row links back to the exact gold-table records used.
+STOP and report.
+```
+
+---
+
+## Phase 8 — Databricks App (UI) + end-to-end wiring
+
+```
+Read AGENTS.md first. We are on Phase 8. Phase 7 is green.
+
+Same operating rules. Build the planner UI in src/app/ (Streamlit or FastAPI) and
+wire it as the mdp_app bundle resource in resources/app.yml. The app needs:
+  - a district choropleth shaded by desert_score
+  - a chat panel routed to the supervisor agent
+  - an evidence drawer (source record + claim sentence + confidence + web
+    corroboration)
+  - an honesty banner (field coverage stats + count of inferred-geography rows)
+  - a Save scenario button writing to Lakebase
+
+Run locally first (`uv run src/app/app.py`), then:
+  `databricks bundle deploy -t prod`
+  `databricks bundle run mdp_app -t prod`
+  `databricks apps logs mdp_app`   # if anything misbehaves
+
+CHECKPOINT 8 — the full demo path, reported step by step:
+  - App URL loads; map renders; chat returns a ranked district list.
+  - Click a district -> candidate facilities show verified-capability badges +
+    confidence.
+  - Honesty banner shows real coverage numbers.
+  - Save scenario -> reload app -> scenario reappears.
+  - `databricks apps logs mdp_app` is clean.
+STOP and report.
+```
+
+---
+
+## Phase 8.5 — Voice & multilingual layer (OPTIONAL)
+
+```
+Read AGENTS.md first. We are on Phase 8.5, which is OPTIONAL. Only proceed if
+Phase 8 is fully green and we have real time left. If Phase 8 is not solid, say
+so and stop — do not start this.
+
+Same operating rules. This is a convenience layer over the existing text demo,
+NOT a new capability. Do not modify the supervisor agent or the data spine.
+
+Tier 1 scope only:
+  - Voice input: capture mic audio in the app, transcribe via a Whisper Large V3
+    Model Serving endpoint OR OpenAI STT routed through AI Gateway. Feed the
+    resulting text to the EXISTING supervisor agent.
+  - Multilingual: run ai_translate on the transcript (e.g. Hindi -> English)
+    before the agent, and translate the answer back for display/playback.
+  - Voice output: TTS reads the answer.
+  - OUT OF SCOPE: real-time conversational voice (WebRTC/barge-in/turn-taking)
+    and any video. Do not build these.
+
+Honesty rule (non-negotiable): the spoken/displayed answer must still state the
+confidence and the key caveat. The map + evidence drawer remain the source of
+truth. Governance: store transcripts (not raw audio unless required) in Lakebase
+under Unity Catalog with a short retention window; document this.
+
+CHECKPOINT 8.5 — report:
+  - Spoken English question -> correct transcript -> same ranked answer as typing.
+  - Spoken Hindi (or regional) question -> correct district result.
+  - Spoken/displayed answer still states confidence + key caveat.
+  - No regression: the text-only demo path still works unchanged.
+  - Audio/transcript handling is governed and documented.
+STOP and report.
+```
+
+---
+
+## Phase 9 — Hardening & submission (final prompt)
+
+```
+Read AGENTS.md first. We are on Phase 9. Phase 8 is green.
+
+Harden for judging:
+  - Turn on MLflow tracing/monitoring in prod; route models via AI Gateway
+    (OpenAI + Databricks FMs) with fallback.
+  - Add a CI gate: the golden Q&A eval set must pass before deploy.
+  - Write the README (what it does in 1–2 sentences, architecture diagram, exact
+    run commands, demo steps), a <=500-char project write-up, and the list of
+    Databricks tech + OSS/partner models used.
+
+CHECKPOINT 9 — judge-reproduction dry run from a clean clone:
+  git clone <repo> fresh && cd fresh
+  databricks bundle validate -t prod
+  databricks bundle deploy -t prod
+  databricks bundle run mdp_app -t prod
+Confirm a teammate who didn't build it can reach a working demo using only the
+README. Confirm the repo is public and will stay public >= 30 days.
+STOP and report.
+```

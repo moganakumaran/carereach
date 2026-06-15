@@ -38,6 +38,27 @@ deserts: districts with high health burden and low *verified* facility coverage.
 - Lakebase and Agent Bricks Supervisor may be **region-gated** — confirm they
   are enabled in this workspace before relying on them.
 
+## Installed Databricks skills
+
+This repo expects the official Databricks agent skills to be installed so the
+coding assistant has accurate, current platform guidance:
+`npx skills add databricks/databricks-agent-skills --skill databricks-apps --skill databricks-pipelines`
+(or `databricks aitools install databricks-agent-skills`). These cover Databricks
+CLI, app development, job orchestration, Lakebase, and Spark Declarative Pipelines.
+Division of labour: **the skills know how Databricks works; this AGENTS.md knows
+how this project works.** Prefer the skills for command/syntax details.
+
+## Optional voice & multilingual layer (Phase 8.5)
+
+Only if the text demo (through Phase 8) is fully working and time remains:
+- Tier 1 only: browser mic → Whisper Large V3 (Model Serving) or OpenAI STT (via
+  AI Gateway) → existing supervisor agent; `ai_translate` for Hindi/regional input
+  and output; TTS for playback. No real-time voice, no video.
+- Honesty rule: spoken output must still state confidence + caveats; map/evidence
+  drawer stay the source of truth.
+- Governance: transcripts (not raw audio unless needed) stored in Lakebase under
+  Unity Catalog, short retention.
+
 ## Architecture (target)
 
 - **UI:** Databricks App (map + chat + evidence drawer + honesty banner + save).

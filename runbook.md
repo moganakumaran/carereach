@@ -51,6 +51,45 @@ databricks auth login --host https://<your-workspace-host>
 
 ---
 
+## Phase 0.5 — Install Databricks agent skills
+
+**Goal:** give your CLI coding assistant accurate, current Databricks guidance so
+it stops guessing at bundle / Apps / Lakebase / pipeline commands. Do this *before*
+Phase 1 so every later phase benefits. Skills are task-specific SKILL.md files (the
+open Agent Skills standard) that the assistant auto-discovers and loads.
+
+```bash
+# See what the official Databricks skill repo offers
+npx skills add databricks/databricks-agent-skills --list
+
+# Install the skills that match this build
+npx skills add databricks/databricks-agent-skills \
+  --skill databricks-apps \
+  --skill databricks-pipelines
+
+# (Alternative) via the Databricks CLI; --experimental pulls extra skills
+databricks aitools install databricks-agent-skills
+
+# (Alternative) Claude Code plugin marketplace — adds slash commands + hooks
+#   /plugin marketplace add databricks/databricks-agent-skills
+#   /plugin install databricks
+```
+
+The core repo covers Databricks CLI operations, app development, job orchestration,
+Lakebase, and Spark Declarative Pipelines. The app-agent templates additionally embed
+skills for agent authoring/migration and the OpenAI Agents SDK — useful in Phase 6.
+These complement your `AGENTS.md`: the skills carry *how Databricks works*; AGENTS.md
+carries *how this project works*.
+
+**Checkpoint 0.5:**
+- `npx skills add databricks/databricks-agent-skills --list` returns a skill list.
+- Installed skills appear in the assistant's skills directory (e.g. `~/.claude/skills/`
+  or your repo's `.claude/skills/`).
+- Sanity test: ask the assistant "how do I define a Lakebase postgres_project in a
+  bundle?" — it should answer from the installed skill, not improvise.
+
+---
+
 ## Phase 1 — Scaffold the bundle
 
 **Goal:** an empty but deployable Declarative Automation Bundle in source control.
@@ -231,6 +270,41 @@ databricks apps logs mdp_app
 
 ---
 
+## Phase 8.5 — Voice & multilingual layer (OPTIONAL — gated)
+
+**Goal:** let a non-technical, possibly non-English-first planner speak a question
+and hear the answer. This is a *convenience layer over the existing text demo*, not
+a new capability. **Do not start this phase unless Phase 8 is fully green and you
+have real time left.** A flawless text demo beats a shaky voice demo.
+
+Scope guardrails (Tier 1 only):
+- Voice **input**: browser mic → speech-to-text via a Whisper Large V3 Model Serving
+  endpoint, or OpenAI STT routed through AI Gateway. Transcribe to text, then feed the
+  *existing* supervisor agent. Do not rebuild the agent.
+- Multilingual: run `ai_translate` on the transcript (e.g. Hindi → English) before the
+  agent, and translate the answer back for display/playback.
+- Voice **output**: TTS reads the answer.
+- Explicitly **out of scope**: real-time conversational voice (WebRTC, barge-in,
+  turn-taking) and any video. Those are separate projects.
+
+**The honesty rule (non-negotiable):** spoken output must still verbalize the
+confidence and caveats. A calm voice saying "deploy to Sheohar" without "confidence
+0.62, capacity known for only 25% of facilities" undercuts the project's core
+principle. The map + evidence drawer remain the source of truth; voice sits on top.
+
+Governance: treat captured audio as sensitive. Store transcripts (not raw audio
+unless needed) in Lakebase under Unity Catalog governance, with a short retention
+window. Document this.
+
+**Checkpoint 8.5:**
+- Spoken English question → correct transcript → same ranked answer as typing it.
+- Hindi (or another regional language) spoken question → correct district result.
+- Spoken/displayed answer still states confidence and the key caveat.
+- No regression: the text-only demo path still works unchanged.
+- Audio/transcript handling is governed and documented.
+
+---
+
 ## Phase 9 — Hardening and submission
 
 **Goal:** a judge can reproduce your demo from a clean clone.
@@ -257,6 +331,7 @@ databricks bundle run mdp_app -t prod
 | Phase | Components exercised |
 |---|---|
 | 0–1 | Databricks CLI, Declarative Automation Bundles, direct deploy engine |
+| 0.5 | Databricks agent skills (`databricks-agent-skills`) for the coding assistant |
 | 2 | Unity Catalog (catalog, schema, volume, grants) |
 | 3 | Volumes, Delta Lake, Lakeflow/Jobs |
 | 4 | AI functions (`ai_query`/`ai_extract`), Vector Search, geospatial `ST_*` |
@@ -264,6 +339,7 @@ databricks bundle run mdp_app -t prod
 | 6 | Agent Bricks Supervisor, Genie, Custom Agent (MLflow ResponsesAgent), UC functions, Foundation Model API web search, MCP, MLflow eval/tracing |
 | 7 | Lakebase (Postgres project/branch/endpoint), agent state |
 | 8 | Databricks Apps, AI Gateway model routing |
+| 8.5 | Whisper/OpenAI STT + TTS (Model Serving / AI Gateway), `ai_translate` multilingual — optional |
 | 9 | MLflow monitoring, CI eval gate |
 
 ---

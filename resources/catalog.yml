@@ -1,0 +1,35 @@
+# Unity Catalog scaffolding for the Medical Desert Planner.
+#
+# PREREQUISITE — the `mdp` catalog is created manually (one time), NOT by this
+# bundle. This metastore uses UC Default Storage, and Default-Storage catalogs
+# can only be created via the Databricks UI (the create API / CLI / bundle path
+# is rejected with "Please use the UI to create a catalog with Default Storage").
+# Create it once: Catalog Explorer -> Create catalog -> name "mdp", Standard
+# (Default Storage). This bundle then manages the four medallion schemas and the
+# raw landing Volume under it (schema/volume creation needs no explicit storage).
+resources:
+  schemas:
+    bronze:
+      catalog_name: ${var.catalog}
+      name: bronze
+      comment: "Raw ingest: facilities, India Post pincode, NFHS-5 (as-landed)."
+    silver:
+      catalog_name: ${var.catalog}
+      name: silver
+      comment: "Cleaned + structured: AI-extracted capability claims, spatial join to districts."
+    gold:
+      catalog_name: ${var.catalog}
+      name: gold
+      comment: "Decision-ready: facility (verified flags + evidence) and district_desert (desert score)."
+    ops:
+      catalog_name: ${var.catalog}
+      name: ops
+      comment: "Operational: run logs, golden eval sets, data-quality results."
+
+  volumes:
+    raw:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.bronze.name}
+      name: raw
+      volume_type: MANAGED
+      comment: "Raw landing zone for source CSVs before bronze ingest."
