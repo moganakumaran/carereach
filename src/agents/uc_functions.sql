@@ -64,3 +64,35 @@ RETURN SELECT facility_id, name, district_name, obstetrics_claimed, csection_cla
        FROM vector_search(index => 'mdp.silver.facility_vs_index',
                           query_vector => ai_query('databricks-gte-large-en', p_query),
                           num_results => 10);
+
+-- ============================================================================
+-- SCALAR tool wrappers (RETURNS STRING JSON). Agent Bricks / Mosaic AI agent UC
+-- function tools must be SCALAR — the table-valued functions above are for Genie/SQL.
+-- Register THESE (+ fn_point_to_district) as supervisor tools.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION mdp.gold.fn_worst_deserts_json(p_state STRING, p_limit INT)
+RETURNS STRING
+COMMENT 'JSON array of the worst maternal-care medical-desert districts (highest desert_score) in an Indian state. Args: p_state, p_limit.'
+RETURN (SELECT to_json(collect_list(struct(trim(district_name) AS district, round(desert_score,3) AS desert_score, round(burden_score,3) AS burden_score, verified_obstetric, total_facilities)))
+  FROM (SELECT district_name, desert_score, burden_score, verified_obstetric, total_facilities, row_number() OVER (ORDER BY desert_score DESC) rn
+        FROM mdp.gold.district_desert WHERE upper(state_ut)=upper(p_state)) WHERE rn<=p_limit);
+
+CREATE OR REPLACE FUNCTION mdp.gold.fn_district_summary_json(p_state STRING, p_district STRING)
+RETURNS STRING
+COMMENT 'JSON object: desert_score + burden, accessibility, verified obstetric coverage and facility count for one Indian district. Args: p_state, p_district.'
+RETURN (SELECT to_json(struct(trim(district_name) AS district, trim(state_ut) AS state, round(desert_score,3) AS desert_score, round(burden_score,3) AS burden_score, round(accessibility_score,3) AS accessibility_score, verified_obstetric, total_facilities, nfhs_small_sample_cols))
+  FROM mdp.gold.district_desert WHERE upper(trim(state_ut))=upper(trim(p_state)) AND upper(trim(district_name))=upper(trim(p_district)) LIMIT 1);
+
+CREATE OR REPLACE FUNCTION mdp.gold.fn_verify_capability_json(p_facility_id STRING, p_service STRING)
+RETURNS STRING
+COMMENT 'JSON verdict {verdict, confidence, rationale} on whether a facility credibly provides a service (csection|obstetrics|icu|blood_bank|emergency). Args: p_facility_id, p_service.'
+RETURN (SELECT ai_query('databricks-gemini-3-5-flash',
+    request => concat('You are a clinical-capability auditor for an Indian health-facility directory whose text contains CLAIMS that may be scraped or exaggerated. Judge whether THIS facility credibly provides the service: ', p_service, '. Weigh explicit mention, specificity, and facility-type plausibility (a dental, eye, diagnostic, or AYUSH facility is implausible for csection/icu/blood_bank). Return verdict in {credible, uncertain, not_credible}, confidence 0-1, and a one-sentence rationale. Facility text: ', coalesce(claim_text, name)),
+    responseFormat => '{"type":"json_schema","json_schema":{"name":"verdict","strict":true,"schema":{"type":"object","additionalProperties":false,"properties":{"verdict":{"type":"string","enum":["credible","uncertain","not_credible"]},"confidence":{"type":"number"},"rationale":{"type":"string"}},"required":["verdict","confidence","rationale"]}}}')
+  FROM mdp.silver.facility_search WHERE facility_id=p_facility_id LIMIT 1);
+
+CREATE OR REPLACE FUNCTION mdp.gold.fn_search_facilities_json(p_query STRING)
+RETURNS STRING
+COMMENT 'JSON array of the top-10 facilities most semantically similar to a free-text clinical query, via Vector Search. Arg: p_query.'
+RETURN (SELECT to_json(collect_list(struct(facility_id, name, district_name, obstetrics_claimed, csection_claimed)))
+  FROM vector_search(index=>'mdp.silver.facility_vs_index', query_vector=>ai_query('databricks-gte-large-en', p_query), num_results=>10));

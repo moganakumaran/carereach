@@ -49,8 +49,11 @@ deserts in Bihar" → Sitamarhi, Araria, Kishanganj, Purnia, Katihar.
 **Create:** UI → **Agent Bricks** → Supervisor (Multi-agent) → name `mdp_supervisor`.
 **Attach tools / agents:**
 1. **Genie space** `MDP Planner` (structured Q&A).
-2. **UC functions** (add as tools): `mdp.gold.fn_worst_deserts`, `fn_district_summary`,
-   `fn_point_to_district`, `fn_verify_capability`, `fn_search_facilities`.
+2. **UC functions** (add as tools) — IMPORTANT: agent tools must be **scalar** functions, so
+   register the `*_json` variants (the table-valued functions are for Genie/SQL only):
+   `mdp.gold.fn_point_to_district`, `fn_worst_deserts_json`, `fn_district_summary_json`,
+   `fn_verify_capability_json`, `fn_search_facilities_json`. Each returns a JSON string the
+   supervisor parses.
 3. **Foundation Model web search** (corroboration) — optional.
 4. **MCP / Marketplace enrichment** — optional.
 
