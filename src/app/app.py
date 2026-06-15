@@ -12,6 +12,7 @@ import streamlit as st
 from databricks.sdk import WorkspaceClient
 
 WAREHOUSE_ID = os.environ.get("MDP_WAREHOUSE_ID", "4248317cbefec64d")
+SUPERVISOR   = os.environ.get("MDP_SUPERVISOR_ENDPOINT", "mas-e40dbc0b-endpoint")
 PG_INSTANCE  = os.environ.get("MDP_PG_INSTANCE", "mdp-pg")
 PG_DATABASE  = os.environ.get("MDP_PG_DATABASE", "mdp_app")
 GAP_T, CONF_T = 0.66, 0.45   # quadrant thresholds (match Checkpoint 5)
@@ -94,6 +95,39 @@ def drill_facilities(level: str, region_key: str) -> pd.DataFrame:
         ORDER BY obstetrics_verified DESC, csection_verified DESC LIMIT 60""")
 
 
+def grounded_answer(question: str, vdf: pd.DataFrame, state: str) -> str:
+    """Planner-agent answer grounded ONLY in the two-signal region data (via ai_query)."""
+    def fmt(r):
+        return (f"{r.region_label} (gap {r.care_gap_score:.2f}, confidence {r.data_confidence_score:.2f}, "
+                f"{int(r.facility_count)} facilities, {int(r.verified_count)} verified obstetric)")
+    real = vdf[vdf.quadrant == "REAL desert (act)"].sort_values("care_gap_score", ascending=False).head(6)
+    poor = vdf[vdf.quadrant == "DATA-POOR (investigate)"].sort_values("care_gap_score", ascending=False).head(6)
+    ctx = ("REAL deserts (high gap, enough data to trust): " + ("; ".join(fmt(r) for _, r in real.iterrows()) or "none")
+           + ".  DATA-POOR (high gap but too little data — investigate, do NOT deploy blindly): "
+           + ("; ".join(fmt(r) for _, r in poor.iterrows()) or "none") + ".")
+    prompt = ("You are CareReach, a maternal-health deployment planner for India. Answer the planner in <=160 words using ONLY the "
+              "region signals provided. Recommend specific districts to deploy a mobile maternal-health unit FROM the REAL deserts. "
+              "Separately and explicitly flag the DATA-POOR districts as 'investigate first - we lack facility evidence there, they are "
+              "not confirmed deserts'. Cite the numbers and state uncertainty honestly. Never present a data-poor region as a confirmed gap. "
+              f"State focus: {state}. Planner question: {question}. Region signals: {ctx}")
+    return run_sql("SELECT ai_query('databricks-gemini-3-5-flash', '" + prompt.replace("'", "''") + "') AS a").iloc[0]["a"]
+
+
+def supervisor_answer(question: str):
+    """Best-effort call to the Agent Bricks supervisor endpoint (shown if it returns text)."""
+    try:
+        r = w().api_client.do("POST", f"/serving-endpoints/{SUPERVISOR}/invocations",
+                              body={"input": [{"role": "user", "content": question}]})
+        out = []
+        for it in (r.get("output") or []):
+            for c in (it.get("content") or []):
+                if c.get("type") in ("output_text", "text"):
+                    out.append(c.get("text", ""))
+        return "\n".join(out).strip() or None
+    except Exception:
+        return None
+
+
 # --------------------------------------------------------------------------- UI
 st.title("🩺 CareReach")
 st.caption("Find the real maternal-care deserts — and know which gaps you can trust. "
@@ -110,6 +144,21 @@ c1, c2, c3 = st.columns(3)
 c1.metric("🔴 REAL deserts (act)", counts.get("REAL desert (act)", 0))
 c2.metric("🟠 DATA-POOR (investigate)", counts.get("DATA-POOR (investigate)", 0))
 c3.metric("🟢 Adequately served", counts.get("adequately served", 0))
+
+st.subheader("💬 Ask the planner agent")
+aq = st.text_input("Ask CareReach a question",
+                   value=f"Where in {state_filter} should we deploy a mobile maternal-health unit, and which regions need investigation first?")
+if st.button("Ask"):
+    with st.spinner("Reasoning over the two-signal region data…"):
+        try:
+            st.markdown(grounded_answer(aq, view, state_filter))
+        except Exception as e:
+            st.error(f"answer failed: {e}")
+        sup = supervisor_answer(aq)
+        if sup:
+            with st.expander("Agent Bricks supervisor (multi-agent) response"):
+                st.markdown(sup)
+    st.caption("Grounded in mdp.gold.region_signals — recommends REAL deserts to act on and flags DATA-POOR regions to investigate first.")
 
 left, right = st.columns([3, 2])
 with left:
