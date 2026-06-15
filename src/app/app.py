@@ -1,9 +1,10 @@
 """Medical Desert Planner — hosted Databricks App (Streamlit).
 
-Map of maternal-care medical deserts + evidence-backed facility verification + scenario save.
-Runs as a Databricks App; authenticates as the app's service principal via the SDK.
-Data: mdp.gold.* (via SQL warehouse), verification via mdp.gold.fn_* (ai_query + Vector Search),
-persistence via Lakebase (mdp-pg / mdp_app).
+PRIMARY VIEW is a 2x2 quadrant (care_gap x data_confidence), NOT a single choropleth, so a
+planner never confuses a HIGH-GAP + LOW-CONFIDENCE *data-poor* region with a confirmed desert.
+Geo-level selector (state/city/district/pincode) over mdp.gold.region_signals; click-through
+drill-down shows the underlying facilities, verified-capability badges, per-claim confidence,
+the verbatim evidence quote, and the raw counts behind both signals. Saves scenarios to Lakebase.
 """
 import os, json, uuid
 import pandas as pd
@@ -11,184 +12,203 @@ import streamlit as st
 from databricks.sdk import WorkspaceClient
 
 WAREHOUSE_ID = os.environ.get("MDP_WAREHOUSE_ID", "4248317cbefec64d")
-SUPERVISOR   = os.environ.get("MDP_SUPERVISOR_ENDPOINT", "mas-e40dbc0b-endpoint")
 PG_INSTANCE  = os.environ.get("MDP_PG_INSTANCE", "mdp-pg")
 PG_DATABASE  = os.environ.get("MDP_PG_DATABASE", "mdp_app")
+GAP_T, CONF_T = 0.66, 0.45   # quadrant thresholds (match Checkpoint 5)
+
+# Resolve each facility's NFHS (state, district) the same way region_signals does, so drill-down
+# facilities match the aggregated region exactly (incl. the alias cases).
+FAC_CTE = """
+WITH bdedup AS (
+  SELECT unique_id, max(address_city) address_city, max(address_zipOrPostcode) zip
+  FROM mdp.bronze.facilities GROUP BY unique_id),
+f0 AS (
+  SELECT g.*, b.address_city, b.zip,
+    CASE g.state_norm WHEN 'MAHARASHTRA' THEN 'MAHARASTRA' WHEN 'DELHI' THEN 'NCT OF DELHI'
+      WHEN 'JAMMU AND KASHMIR' THEN 'JAMMU KASHMIR' WHEN 'TAMILNADU' THEN 'TAMIL NADU'
+      WHEN 'ANDAMAN AND NICOBAR ISLANDS' THEN 'ANDAMAN NICOBAR ISLANDS' WHEN 'ORISSA' THEN 'ODISHA'
+      WHEN 'UTTRANCHAL' THEN 'UTTARAKHAND' WHEN 'U T OF PUDUCHERRY' THEN 'PUDUCHERRY'
+      WHEN 'THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU' THEN 'DADRA AND NAGAR HAVELI DAMAN AND DIU'
+      ELSE g.state_norm END AS ns
+  FROM mdp.gold.facility g LEFT JOIN bdedup b ON b.unique_id = g.facility_id),
+f AS (
+  SELECT *, nullif(trim(regexp_replace(upper(address_city),'[^A-Z0-9]+',' ')),'') AS cn,
+    CAST(try_cast(zip AS BIGINT) AS STRING) AS pc,
+    CASE WHEN ns='TELANGANA' AND district_norm='HYDRABAD' THEN 'HYDERABAD'
+         WHEN ns='TELANGANA' AND district_norm='RANGAREDDY' THEN 'RANGA REDDY'
+         WHEN ns='TELANGANA' AND district_norm='MEDCHAL' THEN 'MEDCHAL MALKAJGIRI'
+         WHEN ns='TELANGANA' AND district_norm='WARANGAL U' THEN 'WARANGAL URBAN'
+         WHEN ns='WEST BENGAL' AND district_norm='NORTH TWENTY FOUR PARGANAS' THEN 'NORTH TWENTY FOUR PARGANA'
+         WHEN ns='WEST BENGAL' AND district_norm='SOUTH TWENTY FOUR PARGANAS' THEN 'SOUTH TWENTY FOUR PARGANA'
+         ELSE district_norm END AS nd
+  FROM f0)
+"""
 
 st.set_page_config(page_title="Medical Desert Planner", layout="wide")
-w = WorkspaceClient()
 
 
 @st.cache_resource
-def _client():
+def w():
     return WorkspaceClient()
 
 
 def run_sql(stmt: str) -> pd.DataFrame:
-    """Run SQL on the warehouse via the Statement Execution API (auth = app SP)."""
-    r = _client().statement_execution.execute_statement(
-        warehouse_id=WAREHOUSE_ID, statement=stmt, wait_timeout="50s")
+    r = w().statement_execution.execute_statement(warehouse_id=WAREHOUSE_ID, statement=stmt, wait_timeout="50s")
     if r.status and r.status.state.value != "SUCCEEDED":
-        msg = r.status.error.message if r.status.error else "unknown"
-        raise RuntimeError(f"SQL failed: {msg}")
+        raise RuntimeError(r.status.error.message if r.status.error else "SQL failed")
     cols = [c.name for c in r.manifest.schema.columns] if r.manifest and r.manifest.schema else []
-    data = r.result.data_array if r.result and r.result.data_array else []
-    return pd.DataFrame(data, columns=cols)
+    return pd.DataFrame(r.result.data_array if (r.result and r.result.data_array) else [], columns=cols)
+
+
+def quadrant(gap, conf):
+    if gap >= GAP_T and conf >= CONF_T:
+        return "REAL desert (act)"
+    if gap >= GAP_T:
+        return "DATA-POOR (investigate)"
+    return "adequately served"
 
 
 @st.cache_data(ttl=300)
-def load_districts() -> pd.DataFrame:
-    df = run_sql("""SELECT district_name, state_ut, CAST(desert_score AS DOUBLE) desert_score,
-        CAST(burden_score AS DOUBLE) burden_score, CAST(accessibility_score AS DOUBLE) accessibility_score,
-        CAST(verified_obstetric AS INT) verified_obstetric, CAST(total_facilities AS INT) total_facilities,
-        CAST(centroid_lat AS DOUBLE) lat, CAST(centroid_lon AS DOUBLE) lon
-        FROM mdp.gold.district_map""")
-    for c in ["desert_score","burden_score","accessibility_score","lat","lon"]:
+def load_level(level: str) -> pd.DataFrame:
+    df = run_sql(f"""SELECT region_key, region_label, state_ut,
+        CAST(care_gap_score AS DOUBLE) care_gap_score, CAST(data_confidence_score AS DOUBLE) data_confidence_score,
+        CAST(facility_count AS INT) facility_count, CAST(verified_count AS INT) verified_count,
+        CAST(high_conf_count AS INT) high_conf_count, CAST(geocoded_count AS INT) geocoded_count,
+        CAST(inferred_count AS INT) inferred_count, CAST(evidence_count AS INT) evidence_count
+        FROM mdp.gold.region_signals WHERE geo_level='{level}'""")
+    for c in ["care_gap_score", "data_confidence_score"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    for c in ["verified_obstetric","total_facilities"]:
+    for c in ["facility_count", "verified_count", "high_conf_count", "geocoded_count", "inferred_count", "evidence_count"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+    df["quadrant"] = [quadrant(g, c) for g, c in zip(df.care_gap_score, df.data_confidence_score)]
     return df
 
 
-@st.cache_data(ttl=300)
-def coverage_stats() -> dict:
-    df = run_sql("""SELECT
-        COUNT(*) n, ROUND(100.0*COUNT_IF(geo_inferred)/COUNT(*),1) pct_inferred,
-        ROUND(100.0*COUNT_IF(obstetrics_verified)/COUNT(*),1) pct_ob_verified
-        FROM mdp.gold.facility""")
-    return df.iloc[0].to_dict()
+def drill_facilities(level: str, region_key: str) -> pd.DataFrame:
+    filt = {"district": "ns||'|'||nd", "state": "ns", "city": "ns||'|'||cn", "pincode": "pc"}[level]
+    rk = region_key.replace("'", "''")
+    return run_sql(f"""{FAC_CTE}
+        SELECT name, obstetrics_verified, csection_verified, icu_verified,
+               ROUND(obstetrics_confidence,2) ob_conf, claim_sentence, geo_inferred
+        FROM f WHERE {filt} = '{rk}'
+        ORDER BY obstetrics_verified DESC, csection_verified DESC LIMIT 60""")
 
 
-def facilities_in_district(state: str, district: str) -> pd.DataFrame:
-    return run_sql(f"""SELECT facility_id, name, obstetrics_verified, csection_verified, icu_verified,
-        ROUND(obstetrics_confidence,2) ob_conf, claim_sentence, geo_inferred
-        FROM mdp.gold.facility
-        WHERE upper(trim(state_norm))=upper('{state}') AND upper(trim(district_norm))=upper('{district}')
-        ORDER BY obstetrics_verified DESC, csection_verified DESC LIMIT 50""")
-
-
-def verify(facility_id: str, service: str) -> dict:
-    df = run_sql(f"SELECT mdp.gold.fn_verify_capability_json('{facility_id}','{service}') j")
-    try:
-        return json.loads(df.iloc[0]["j"])
-    except Exception:
-        return {"verdict": "unknown", "confidence": 0, "rationale": ""}
-
-
-# ----------------------------------------------------------------------------- UI
+# --------------------------------------------------------------------------- UI
 st.title("🩺 Medical Desert Planner")
-st.caption("Where should we send a mobile maternal-health unit? Evidence-backed, uncertainty-aware.")
+st.caption("Two signals, never collapsed: **where are the care gaps** × **how confident are we they're real vs. just data-poor**.")
 
-try:
-    cov = coverage_stats()
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Facilities (India)", f"{int(float(cov['n'])):,}")
-    c2.metric("Obstetric capability *verified*", f"{cov['pct_ob_verified']}%")
-    c3.metric("Using inferred geography", f"{cov['pct_inferred']}%")
-    st.info("Honesty banner: capability flags are AI-extracted **claims** verified by an LLM auditor; "
-            "coverage counts only *verified* obstetric facilities. Inferred-geography rows are flagged, not dropped.")
-except Exception as e:
-    st.error(f"Could not load coverage stats: {e}")
+level = st.sidebar.radio("Geography level", ["district", "state", "city", "pincode"], index=0)
+df = load_level(level)
+states = ["(all)"] + sorted(df["state_ut"].dropna().unique().tolist())
+state_filter = st.sidebar.selectbox("Filter by state", states, index=(states.index("Bihar") if "Bihar" in states else 0))
+view = df if state_filter == "(all)" else df[df["state_ut"] == state_filter]
 
-districts = load_districts()
-states = sorted(districts["state_ut"].dropna().unique().tolist())
-default_ix = states.index("Bihar") if "Bihar" in states else 0
-state = st.sidebar.selectbox("State", states, index=default_ix)
-topn = st.sidebar.slider("How many districts", 3, 15, 5)
-
-sd = districts[districts["state_ut"] == state].sort_values("desert_score", ascending=False)
+counts = view["quadrant"].value_counts().to_dict()
+c1, c2, c3 = st.columns(3)
+c1.metric("🔴 REAL deserts (act)", counts.get("REAL desert (act)", 0))
+c2.metric("🟠 DATA-POOR (investigate)", counts.get("DATA-POOR (investigate)", 0))
+c3.metric("🟢 Adequately served", counts.get("adequately served", 0))
 
 left, right = st.columns([3, 2])
 with left:
-    st.subheader(f"Desert map — {state}")
-    md = sd.dropna(subset=["lat", "lon"]).copy()
-    if not md.empty:
-        try:
-            import pydeck as pdk
-            md["r"] = (md["desert_score"] * 255).clip(0, 255).astype(int)
-            md["radius"] = (md["desert_score"] * 30000 + 4000)
-            layer = pdk.Layer("ScatterplotLayer", md, get_position=["lon", "lat"],
-                              get_fill_color="[r, 80, 40, 160]", get_radius="radius", pickable=True)
-            st.pydeck_chart(pdk.Deck(layers=[layer],
-                initial_view_state=pdk.ViewState(latitude=md["lat"].mean(), longitude=md["lon"].mean(), zoom=5.5),
-                tooltip={"text": "{district_name}\ndesert {desert_score}"}))
-        except Exception:
-            st.map(md.rename(columns={"lat": "latitude", "lon": "longitude"})[["latitude", "longitude"]])
-    st.caption("Darker/larger = worse desert (high burden, low verified coverage).")
+    st.subheader(f"2×2 — care gap × data confidence ({level}{'' if state_filter=='(all)' else ', '+state_filter})")
+    try:
+        import altair as alt
+        base = alt.Chart(view)
+        pts = base.mark_circle(size=90, opacity=0.6).encode(
+            x=alt.X("data_confidence_score", title="Data confidence  →  (trust the gap)", scale=alt.Scale(domain=[0, 1])),
+            y=alt.Y("care_gap_score", title="Care gap  →  (worse)", scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color("quadrant", scale=alt.Scale(
+                domain=["REAL desert (act)", "DATA-POOR (investigate)", "adequately served"],
+                range=["#d62728", "#ff7f0e", "#2ca02c"])),
+            tooltip=["region_label", "state_ut", "care_gap_score", "data_confidence_score",
+                     "facility_count", "verified_count", "inferred_count"])
+        vline = alt.Chart(pd.DataFrame({"x": [CONF_T]})).mark_rule(strokeDash=[5, 5], color="gray").encode(x="x")
+        hline = alt.Chart(pd.DataFrame({"y": [GAP_T]})).mark_rule(strokeDash=[5, 5], color="gray").encode(y="y")
+        st.altair_chart(pts + vline + hline, use_container_width=True)
+        st.caption("Top-left = HIGH gap + LOW confidence = **data-poor, investigate first** (not a confirmed desert). "
+                   "Top-right = HIGH gap + HIGH confidence = **real desert, act**.")
+    except Exception as e:
+        st.error(f"chart error: {e}")
+        st.scatter_chart(view, x="data_confidence_score", y="care_gap_score", color="quadrant")
 
 with right:
-    st.subheader(f"Worst {topn} deserts")
-    st.dataframe(sd.head(topn)[["district_name", "desert_score", "burden_score",
-                                "verified_obstetric", "total_facilities"]],
-                 hide_index=True, use_container_width=True)
+    st.subheader("Regions")
+    st.dataframe(view.sort_values("care_gap_score", ascending=False)
+                 [["region_label", "quadrant", "care_gap_score", "data_confidence_score", "facility_count", "verified_count"]],
+                 hide_index=True, use_container_width=True, height=360)
 
 st.divider()
-st.subheader("District detail & evidence")
-dsel = st.selectbox("District", sd["district_name"].tolist())
-if dsel:
-    drow = sd[sd["district_name"] == dsel].iloc[0]
+st.subheader("Drill-down — why is this region flagged?")
+opts = view.sort_values("care_gap_score", ascending=False)["region_label"].tolist()
+sel = st.selectbox("Region", opts)
+if sel:
+    r = view[view["region_label"] == sel].iloc[0]
+    q = r["quadrant"]
+    icon = {"REAL desert (act)": "🔴", "DATA-POOR (investigate)": "🟠", "adequately served": "🟢"}[q]
+    st.markdown(f"### {icon} {sel} — **{q}**")
+    fc = int(r["facility_count"])
     a, b, c, d = st.columns(4)
-    a.metric("Desert score", f"{drow['desert_score']:.3f}")
-    b.metric("Burden", f"{drow['burden_score']:.3f}")
-    c.metric("Verified obstetric", int(drow["verified_obstetric"]))
-    d.metric("Total facilities", int(drow["total_facilities"]))
-    try:
-        facs = facilities_in_district(state, dsel)
-        if facs.empty:
-            st.warning("No facilities mapped to this district — a candidate for a mobile unit.")
-        else:
-            st.write("Candidate facilities (verified-obstetric first):")
-            for _, f in facs.head(15).iterrows():
-                badge = "✅ obstetrics" if str(f["obstetrics_verified"]).lower() == "true" else "— obstetrics unverified"
-                with st.expander(f"{f['name']} · {badge}"):
-                    st.write(f"Claim: _{f['claim_sentence'] or '—'}_")
-                    if st.button("Verify C-section capability", key=f"v{f['facility_id']}"):
-                        v = verify(f["facility_id"], "csection")
-                        st.write(f"**{v['verdict']}** (confidence {v.get('confidence')}) — {v.get('rationale','')}")
-    except Exception as e:
-        st.error(f"Facility lookup failed: {e}")
+    a.metric("Care gap", f"{r['care_gap_score']:.3f}")
+    b.metric("Data confidence", f"{r['data_confidence_score']:.3f}")
+    c.metric("Facilities (evidence)", fc)
+    d.metric("Verified obstetric", int(r["verified_count"]))
+    # Honesty banner for THIS region
+    if fc > 0:
+        st.info(f"**Honesty for {sel}:** {int(r['geocoded_count'])}/{fc} geocoded "
+                f"({100*r['inferred_count']/fc:.0f}% inferred geography) · "
+                f"{100*r['high_conf_count']/fc:.0f}% high-confidence claims · "
+                f"{100*r['evidence_count']/fc:.0f}% with an evidence quote.")
+    else:
+        st.warning(f"**{sel} has ZERO facilities in our data.** The high care gap is burden-driven; with no "
+                   f"facility evidence we cannot confirm a true desert — this is **data-poor → investigate**, not deploy.")
+    if q == "DATA-POOR (investigate)":
+        st.warning("⚠️ Flagged DATA-POOR: confidence is below threshold. Investigate/collect data before deploying a unit here.")
+    elif q == "REAL desert (act)":
+        st.success("✅ Confirmed desert: enough facility evidence to trust the low verified coverage. Candidate for deployment.")
+
+    if fc > 0:
+        try:
+            facs = drill_facilities(level, r["region_key"])
+            st.write(f"Underlying facilities ({len(facs)} shown):")
+            for _, f in facs.iterrows():
+                ob = str(f["obstetrics_verified"]).lower() == "true"
+                cs = str(f["csection_verified"]).lower() == "true"
+                badges = ("✅ obstetrics" if ob else "▫️ obstetrics") + " · " + ("✅ C-section" if cs else "▫️ C-section")
+                inferred = " · 📍inferred geo" if str(f["geo_inferred"]).lower() == "true" else ""
+                with st.expander(f"{f['name']}  —  {badges}  (ob conf {f['ob_conf']}){inferred}"):
+                    st.write(f"Verbatim claim: _{f['claim_sentence'] or '—'}_")
+        except Exception as e:
+            st.error(f"facility drill-down failed: {e}")
 
 st.divider()
-st.subheader("Ask the planner")
-q = st.text_input("Question", value=f"Where in {state} should we deploy a mobile maternal-health unit?")
-if st.button("Answer"):
-    ranked = sd.head(topn)
-    st.write(f"**Top maternal-care deserts in {state}:**")
-    for _, r in ranked.iterrows():
-        st.write(f"- **{r['district_name']}** — desert {r['desert_score']:.3f}, burden {r['burden_score']:.2f}, "
-                 f"{int(r['verified_obstetric'])} verified obstetric / {int(r['total_facilities'])} facilities")
-    st.session_state["last_answer"] = {
-        "state": state,
-        "question": q,
-        "top_districts": ranked[["district_name", "desert_score", "verified_obstetric"]].to_dict("records"),
-    }
-
-if st.session_state.get("last_answer") and st.button("💾 Save scenario to Lakebase"):
+st.subheader("Save scenario")
+note = st.text_input("Question / note", value=f"Where in {state_filter} should we deploy a mobile maternal-health unit?")
+if st.button("💾 Save scenario to Lakebase"):
     import psycopg2
     pg_keys = sorted([k for k in os.environ if k.startswith(("PG", "POSTGRES", "DATABRICKS_DATABASE")) or "DATABASE_URL" in k])
+    payload = {"level": level, "state": state_filter, "selected_region": sel,
+               "quadrant": view[view.region_label == sel]["quadrant"].iloc[0] if sel else None,
+               "buckets": counts}
     try:
         if os.environ.get("PGHOST") and os.environ.get("PGUSER") and os.environ.get("PGPASSWORD"):
-            # Preferred: connection injected by the Lakebase `database` app resource binding.
-            conn = psycopg2.connect(
-                host=os.environ["PGHOST"], port=os.environ.get("PGPORT", "5432"),
+            conn = psycopg2.connect(host=os.environ["PGHOST"], port=os.environ.get("PGPORT", "5432"),
                 dbname=os.environ.get("PGDATABASE", PG_DATABASE), user=os.environ["PGUSER"],
                 password=os.environ["PGPASSWORD"], sslmode=os.environ.get("PGSSLMODE", "require"))
             src = "binding"
         else:
-            # Fallback: mint a short-lived credential ourselves.
-            cred = _client().database.generate_database_credential(
-                request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE])
-            inst = _client().database.get_database_instance(name=PG_INSTANCE)
+            cred = w().database.generate_database_credential(request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE])
+            inst = w().database.get_database_instance(name=PG_INSTANCE)
             conn = psycopg2.connect(host=inst.read_write_dns, port=5432, dbname=PG_DATABASE,
-                                    user=_client().current_user.me().user_name, password=cred.token, sslmode="require")
+                                    user=w().current_user.me().user_name, password=cred.token, sslmode="require")
             src = "generated"
         conn.autocommit = True
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO sessions(planner,title) VALUES(%s,%s) RETURNING session_id",
-                        ("app user", f"{state} maternal unit"))
+            cur.execute("INSERT INTO sessions(planner,title) VALUES(%s,%s) RETURNING session_id", ("app user", note[:80]))
             sid = cur.fetchone()[0]
             cur.execute("INSERT INTO scenarios(session_id,question,state,answer) VALUES(%s,%s,%s,%s) RETURNING scenario_id",
-                        (sid, q, state, json.dumps(st.session_state["last_answer"])))
+                        (sid, note, state_filter, json.dumps(payload)))
             scid = cur.fetchone()[0]
         conn.close()
         st.success(f"Saved scenario {scid} via {src} auth — reload and it persists in Lakebase.")
