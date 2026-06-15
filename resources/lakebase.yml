@@ -1,17 +1,12 @@
 # Lakebase (serverless Postgres) for planner state & persistence.
-# database_instance = the Postgres instance; database_catalog registers its `mdp_app`
-# database as a Unity Catalog catalog so it is governed alongside the rest of mdp.
-# App tables (sessions/scenarios/evidence_trail/reviewer_overrides) are created by the
-# db_migrate job (src/db/schema.sql) against the instance.
+# The app connects to the instance directly (Postgres) via its `database` resource binding,
+# so only the instance is required here. App tables (sessions/scenarios/evidence_trail/
+# reviewer_overrides) are created by src/db/schema.sql; the app SP is provisioned as a
+# Postgres role via src/db/grant_app_sp.sql.
+# (The optional database_catalog that registered mdp_app in UC was dropped — it was unused by
+#  the app and complicated deploys; re-add it if UC governance over the Postgres DB is needed.)
 resources:
   database_instances:
     mdp_pg:
       name: mdp-pg
       capacity: CU_1          # smallest Lakebase SKU
-
-  database_catalogs:
-    mdp_lakebase:
-      name: mdp_lakebase                 # UC catalog name
-      database_instance_name: mdp-pg
-      database_name: mdp_app             # Postgres database
-      create_database_if_not_exists: true
