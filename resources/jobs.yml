@@ -1,0 +1,36 @@
+# Bronze ingest job: lands the three Virtue Foundation source tables into mdp.bronze
+# as Delta, then asserts the Checkpoint-3 invariants. Every task is idempotent
+# (CREATE OR REPLACE), so re-running the job yields identical row counts.
+#
+# Run with:  databricks bundle run bronze_ingest -t dev
+resources:
+  jobs:
+    bronze_ingest:
+      name: mdp_bronze_ingest
+      tasks:
+        - task_key: ingest_facilities
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../src/pipelines/bronze/facilities.sql
+        - task_key: ingest_pincode
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../src/pipelines/bronze/pincode.sql
+        - task_key: ingest_nfhs5
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../src/pipelines/bronze/nfhs5.sql
+        - task_key: assert_bronze
+          depends_on:
+            - task_key: ingest_facilities
+            - task_key: ingest_pincode
+            - task_key: ingest_nfhs5
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../tests/bronze_assertions.sql
+      queue:
+        enabled: true

@@ -13,6 +13,9 @@ variables:
     description: The catalog to use
   schema:
     description: The schema to use
+  warehouse_id:
+    description: SQL warehouse id used by the bronze_ingest job (and other SQL tasks).
+    default: 4248317cbefec64d
 
 targets:
   dev:
