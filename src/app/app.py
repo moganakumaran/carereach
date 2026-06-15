@@ -164,13 +164,24 @@ if st.button("Answer"):
     }
 
 if st.session_state.get("last_answer") and st.button("💾 Save scenario to Lakebase"):
+    import psycopg2
+    pg_keys = sorted([k for k in os.environ if k.startswith(("PG", "POSTGRES", "DATABRICKS_DATABASE")) or "DATABASE_URL" in k])
     try:
-        import psycopg2
-        cred = _client().database.generate_database_credential(
-            request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE])
-        inst = _client().database.get_database_instance(name=PG_INSTANCE)
-        conn = psycopg2.connect(host=inst.read_write_dns, port=5432, dbname=PG_DATABASE,
-                                user=_client().current_user.me().user_name, password=cred.token, sslmode="require")
+        if os.environ.get("PGHOST") and os.environ.get("PGUSER") and os.environ.get("PGPASSWORD"):
+            # Preferred: connection injected by the Lakebase `database` app resource binding.
+            conn = psycopg2.connect(
+                host=os.environ["PGHOST"], port=os.environ.get("PGPORT", "5432"),
+                dbname=os.environ.get("PGDATABASE", PG_DATABASE), user=os.environ["PGUSER"],
+                password=os.environ["PGPASSWORD"], sslmode=os.environ.get("PGSSLMODE", "require"))
+            src = "binding"
+        else:
+            # Fallback: mint a short-lived credential ourselves.
+            cred = _client().database.generate_database_credential(
+                request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE])
+            inst = _client().database.get_database_instance(name=PG_INSTANCE)
+            conn = psycopg2.connect(host=inst.read_write_dns, port=5432, dbname=PG_DATABASE,
+                                    user=_client().current_user.me().user_name, password=cred.token, sslmode="require")
+            src = "generated"
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("INSERT INTO sessions(planner,title) VALUES(%s,%s) RETURNING session_id",
@@ -180,6 +191,6 @@ if st.session_state.get("last_answer") and st.button("💾 Save scenario to Lake
                         (sid, q, state, json.dumps(st.session_state["last_answer"])))
             scid = cur.fetchone()[0]
         conn.close()
-        st.success(f"Saved scenario {scid} — reload and it persists in Lakebase.")
+        st.success(f"Saved scenario {scid} via {src} auth — reload and it persists in Lakebase.")
     except Exception as e:
-        st.error(f"Save failed: {e}")
+        st.error(f"Save failed [pg env: {', '.join(pg_keys) or 'none'}]: {e}")
