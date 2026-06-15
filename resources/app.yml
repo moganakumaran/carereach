@@ -1,4 +1,4 @@
-# Databricks App (hosted) for the Medical Desert Planner UI.
+# Databricks App (hosted) for the CareReach UI.
 # Source in src/app/ (app.py + app.yaml + requirements.txt). Resource bindings grant the app's
 # service principal access to the SQL warehouse, supervisor endpoint, and Lakebase, and inject
 # their identifiers as env vars (referenced via valueFrom in app.yaml).

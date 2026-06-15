@@ -1,4 +1,4 @@
-"""Medical Desert Planner — hosted Databricks App (Streamlit).
+"""CareReach — hosted Databricks App (Streamlit).
 
 PRIMARY VIEW is a 2x2 quadrant (care_gap x data_confidence), NOT a single choropleth, so a
 planner never confuses a HIGH-GAP + LOW-CONFIDENCE *data-poor* region with a confirmed desert.

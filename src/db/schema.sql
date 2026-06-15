@@ -1,4 +1,4 @@
--- Lakebase (Postgres) app-state schema for the Medical Desert Planner.
+-- Lakebase (Postgres) app-state schema for CareReach.
 -- Applied by the db_migrate step against the mdp-pg instance / mdp_app database.
 -- Persists planner sessions, saved scenarios, the evidence trail, and reviewer overrides.
 

@@ -1,4 +1,4 @@
-# Medical Desert Planner — CLI Build Runbook
+# CareReach — CLI Build Runbook (Track 2: Medical Desert Planner)
 
 A phase-by-phase build plan driven from the Databricks CLI, designed so each phase ends with a **checkpoint gate** you must pass before moving on. Build the boring spine first (ingest → spatial → gold → Genie), prove it works, then layer on the agents and the app.
 

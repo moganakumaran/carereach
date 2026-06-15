@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the Lakebase Postgres schema for the Medical Desert Planner.
+"""Apply the Lakebase Postgres schema for CareReach.
 
 Connects to the mdp-pg instance using a short-lived OAuth credential and applies
 src/db/schema.sql (idempotent CREATE TABLE IF NOT EXISTS), then lists the tables.

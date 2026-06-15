@@ -1,4 +1,4 @@
-# Unity Catalog scaffolding for the Medical Desert Planner.
+# Unity Catalog scaffolding for CareReach.
 #
 # PREREQUISITE — the `mdp` catalog is created manually (one time), NOT by this
 # bundle. This metastore uses UC Default Storage, and Default-Storage catalogs
