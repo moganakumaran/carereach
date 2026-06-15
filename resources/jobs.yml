@@ -34,3 +34,44 @@ resources:
               path: ../tests/bronze_assertions.sql
       queue:
         enabled: true
+
+    # Silver transform: clean enrichment + AI extraction + spatial district assignment.
+    # NFHS clean, pincode dedup and boundary ingest run in parallel; facility build waits on
+    # claims extraction + boundaries + pincode. Idempotent. Run: databricks bundle run silver_transform -t dev
+    # NOTE: extract_claims runs ~10k ai_query (gemini-3-5-flash) calls (~45 min on a 2X-Small warehouse).
+    silver_transform:
+      name: mdp_silver_transform
+      tasks:
+        - task_key: clean_nfhs5
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/silver/nfhs5_clean.sql}
+        - task_key: dedup_pincode
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/silver/pincode_dedup.sql}
+        - task_key: ingest_boundaries
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/bronze/district_boundaries.sql}
+        - task_key: clean_boundaries
+          depends_on: [{task_key: ingest_boundaries}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/silver/district_boundaries.sql}
+        - task_key: extract_claims
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/silver/facility_claims.sql}
+        - task_key: build_facility
+          depends_on: [{task_key: extract_claims}, {task_key: clean_boundaries}, {task_key: dedup_pincode}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/silver/facility.sql}
+        - task_key: assert_silver
+          depends_on: [{task_key: build_facility}, {task_key: clean_nfhs5}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../tests/silver_assertions.sql}
+      queue:
+        enabled: true
