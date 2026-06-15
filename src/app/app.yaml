@@ -1,0 +1,12 @@
+# Databricks Apps spec. Streamlit serves on the app's assigned port.
+command: ["streamlit", "run", "app.py", "--server.port", "8000", "--server.address", "0.0.0.0", "--server.headless", "true"]
+
+env:
+  - name: MDP_WAREHOUSE_ID
+    valueFrom: sql_warehouse
+  - name: MDP_SUPERVISOR_ENDPOINT
+    valueFrom: supervisor
+  - name: MDP_PG_INSTANCE
+    value: mdp-pg
+  - name: MDP_PG_DATABASE
+    value: mdp_app

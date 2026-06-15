@@ -1,0 +1,23 @@
+# Databricks App (hosted) for the Medical Desert Planner UI.
+# Source in src/app/ (app.py + app.yaml + requirements.txt). Resource bindings grant the app's
+# service principal access to the SQL warehouse, supervisor endpoint, and Lakebase, and inject
+# their identifiers as env vars (referenced via valueFrom in app.yaml).
+resources:
+  apps:
+    mdp_app:
+      name: mdp-planner
+      description: "Medical Desert Planner — maternal-care desert map, evidence, and scenario save."
+      source_code_path: ../src/app
+      resources:
+        - name: sql_warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: supervisor
+          serving_endpoint:
+            name: mas-e40dbc0b-endpoint
+            permission: CAN_QUERY
+        # NOTE: Lakebase (database) binding omitted until the app's service principal is
+        # provisioned as a Postgres role in mdp-pg (Apps grant fails with "role not found"
+        # otherwise). Persistence is proven in Checkpoint 7; re-add this binding after the
+        # SP role exists to enable the in-app Save-scenario button.
