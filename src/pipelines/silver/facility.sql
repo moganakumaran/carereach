@@ -39,4 +39,6 @@ SELECT
   (s.facility_id IS NULL)                                       AS geo_inferred
 FROM f
 LEFT JOIN spatial s ON f.facility_id = s.facility_id
-LEFT JOIN pin      ON f.facility_id = pin.facility_id;
+LEFT JOIN pin      ON f.facility_id = pin.facility_id
+-- source has ~11 duplicate unique_ids; keep exactly one row per facility (prefer the spatial match)
+QUALIFY row_number() OVER (PARTITION BY f.facility_id ORDER BY s.shape_id NULLS LAST) = 1;

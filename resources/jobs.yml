@@ -68,8 +68,13 @@ resources:
           sql_task:
             warehouse_id: ${var.warehouse_id}
             file: {path: ../src/pipelines/silver/facility.sql}
+        - task_key: build_facility_search
+          depends_on: [{task_key: build_facility}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/silver/facility_search.sql}
         - task_key: assert_silver
-          depends_on: [{task_key: build_facility}, {task_key: clean_nfhs5}]
+          depends_on: [{task_key: build_facility_search}, {task_key: clean_nfhs5}]
           sql_task:
             warehouse_id: ${var.warehouse_id}
             file: {path: ../tests/silver_assertions.sql}
