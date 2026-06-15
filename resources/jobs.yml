@@ -80,3 +80,25 @@ resources:
             file: {path: ../tests/silver_assertions.sql}
       queue:
         enabled: true
+
+    # Gold build: decision-ready facility + district_desert tables, then DQ assertions.
+    # Run: databricks bundle run gold_build -t dev   (depends on silver tables existing)
+    gold_build:
+      name: mdp_gold_build
+      tasks:
+        - task_key: build_gold_facility
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/gold/facility.sql}
+        - task_key: build_district_desert
+          depends_on: [{task_key: build_gold_facility}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../src/pipelines/gold/district_desert.sql}
+        - task_key: assert_gold
+          depends_on: [{task_key: build_district_desert}]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file: {path: ../tests/gold_assertions.sql}
+      queue:
+        enabled: true
