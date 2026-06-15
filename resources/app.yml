@@ -17,7 +17,11 @@ resources:
           serving_endpoint:
             name: mas-e40dbc0b-endpoint
             permission: CAN_QUERY
-        # NOTE: Lakebase (database) binding omitted until the app's service principal is
-        # provisioned as a Postgres role in mdp-pg (Apps grant fails with "role not found"
-        # otherwise). Persistence is proven in Checkpoint 7; re-add this binding after the
-        # SP role exists to enable the in-app Save-scenario button.
+        # Lakebase binding: federates the app SP for OAuth login to mdp-pg (a plain CREATE ROLE
+        # is not enough — this grant is what makes the SP's token accepted). The SP role must
+        # already exist (see src/db/grant_app_sp.sql), else this fails with "role not found".
+        - name: lakebase
+          database:
+            instance_name: mdp-pg
+            database_name: mdp_app
+            permission: CAN_CONNECT_AND_CREATE
