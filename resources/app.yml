@@ -6,7 +6,7 @@ resources:
   apps:
     mdp_app:
       name: mdp-planner
-      description: "Medical Desert Planner — maternal-care desert map, evidence, and scenario save."
+      description: "CareReach — find real maternal-care deserts (gap x data-confidence), evidence, and scenario save."
       source_code_path: ../src/app
       resources:
         - name: sql_warehouse

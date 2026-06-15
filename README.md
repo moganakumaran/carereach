@@ -1,6 +1,8 @@
-# 🩺 Medical Desert Planner
+# 🩺 CareReach
 
-**Databricks Apps & Agents for Good Hackathon 2026 — Track 2**
+*Find the real maternal-care deserts — and know which gaps you can trust.*
+
+**Databricks Apps & Agents for Good Hackathon 2026 — Track 2 (Medical Desert Planner)**
 
 A non-technical planner asks, in plain language — *"Where in Bihar should we deploy a mobile
 maternal-health unit?"* — and gets a **ranked, evidence-backed, uncertainty-aware** answer they
@@ -86,7 +88,7 @@ all min-max normalized; **coverage counts only verified-obstetric facilities**.
 - Open data: **geoBoundaries** India ADM2 (CC-BY)
 
 **Project write-up (≤500 chars):**
-> Medical Desert Planner turns a noisy 10k-facility India directory + NFHS-5 + PIN geography into a
+> CareReach turns a noisy 10k-facility India directory + NFHS-5 + PIN geography into a
 > governed medallion pipeline on Databricks. AI extracts capability *claims*; an LLM auditor +
 > Vector Search verify them; a desert score (burden + verified coverage + access) ranks districts.
 > A hosted app maps deserts, cites evidence, shows uncertainty honestly, and saves scenarios to
