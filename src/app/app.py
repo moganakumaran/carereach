@@ -128,6 +128,19 @@ def supervisor_answer(question: str):
         return None
 
 
+def pg_connect():
+    """Connect to Lakebase: prefer the binding-injected PG* env, else mint a credential."""
+    import psycopg2
+    if os.environ.get("PGHOST") and os.environ.get("PGUSER") and os.environ.get("PGPASSWORD"):
+        return psycopg2.connect(host=os.environ["PGHOST"], port=os.environ.get("PGPORT", "5432"),
+            dbname=os.environ.get("PGDATABASE", PG_DATABASE), user=os.environ["PGUSER"],
+            password=os.environ["PGPASSWORD"], sslmode=os.environ.get("PGSSLMODE", "require")), "binding"
+    cred = w().database.generate_database_credential(request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE])
+    inst = w().database.get_database_instance(name=PG_INSTANCE)
+    return psycopg2.connect(host=inst.read_write_dns, port=5432, dbname=PG_DATABASE,
+        user=w().current_user.me().user_name, password=cred.token, sslmode="require"), "generated"
+
+
 # --------------------------------------------------------------------------- UI
 st.title("🩺 CareReach")
 st.caption("Find the real maternal-care deserts — and know which gaps you can trust. "
@@ -151,13 +164,17 @@ aq = st.text_input("Ask CareReach a question",
 if st.button("Ask"):
     with st.spinner("Reasoning over the two-signal region data…"):
         try:
-            st.markdown(grounded_answer(aq, view, state_filter))
+            ans = grounded_answer(aq, view, state_filter)
         except Exception as e:
-            st.error(f"answer failed: {e}")
-        sup = supervisor_answer(aq)
-        if sup:
-            with st.expander("Agent Bricks supervisor (multi-agent) response"):
-                st.markdown(sup)
+            ans = f"(answer failed: {e})"
+        st.session_state["agent_q"] = aq
+        st.session_state["agent_answer"] = ans
+        st.session_state["agent_supervisor"] = supervisor_answer(aq)
+if st.session_state.get("agent_answer"):
+    st.markdown(st.session_state["agent_answer"])
+    if st.session_state.get("agent_supervisor"):
+        with st.expander("Agent Bricks supervisor (multi-agent) response"):
+            st.markdown(st.session_state["agent_supervisor"])
     st.caption("Grounded in mdp.gold.region_signals — recommends REAL deserts to act on and flags DATA-POOR regions to investigate first.")
 
 left, right = st.columns([3, 2])
@@ -234,25 +251,23 @@ if sel:
 
 st.divider()
 st.subheader("Save scenario")
-note = st.text_input("Question / note", value=f"Where in {state_filter} should we deploy a mobile maternal-health unit?")
+agent_q = st.session_state.get("agent_q")
+agent_answer = st.session_state.get("agent_answer")
+note = st.text_input("Question / note", value=agent_q or f"Where in {state_filter} should we deploy a mobile maternal-health unit?")
+if agent_answer:
+    st.caption("✓ The planner agent's recommendation will be saved with this scenario.")
+else:
+    st.caption("Tip: use **Ask the planner agent** above first — its recommendation is saved with the scenario.")
 if st.button("💾 Save scenario to Lakebase"):
-    import psycopg2
     pg_keys = sorted([k for k in os.environ if k.startswith(("PG", "POSTGRES", "DATABRICKS_DATABASE")) or "DATABASE_URL" in k])
     payload = {"level": level, "state": state_filter, "selected_region": sel,
                "quadrant": view[view.region_label == sel]["quadrant"].iloc[0] if sel else None,
-               "buckets": counts}
+               "buckets": counts,
+               "agent_question": agent_q,
+               "agent_answer": agent_answer,
+               "supervisor_answer": st.session_state.get("agent_supervisor")}
     try:
-        if os.environ.get("PGHOST") and os.environ.get("PGUSER") and os.environ.get("PGPASSWORD"):
-            conn = psycopg2.connect(host=os.environ["PGHOST"], port=os.environ.get("PGPORT", "5432"),
-                dbname=os.environ.get("PGDATABASE", PG_DATABASE), user=os.environ["PGUSER"],
-                password=os.environ["PGPASSWORD"], sslmode=os.environ.get("PGSSLMODE", "require"))
-            src = "binding"
-        else:
-            cred = w().database.generate_database_credential(request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE])
-            inst = w().database.get_database_instance(name=PG_INSTANCE)
-            conn = psycopg2.connect(host=inst.read_write_dns, port=5432, dbname=PG_DATABASE,
-                                    user=w().current_user.me().user_name, password=cred.token, sslmode="require")
-            src = "generated"
+        conn, src = pg_connect()
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("INSERT INTO sessions(planner,title) VALUES(%s,%s) RETURNING session_id", ("app user", note[:80]))
@@ -261,6 +276,29 @@ if st.button("💾 Save scenario to Lakebase"):
                         (sid, note, state_filter, json.dumps(payload)))
             scid = cur.fetchone()[0]
         conn.close()
-        st.success(f"Saved scenario {scid} via {src} auth — reload and it persists in Lakebase.")
+        st.success(f"Saved scenario {scid} via {src} auth — including the agent's recommendation. Open it below.")
     except Exception as e:
         st.error(f"Save failed [pg env: {', '.join(pg_keys) or 'none'}]: {e}")
+
+st.divider()
+st.subheader("📂 Saved scenarios (reopen)")
+if st.button("Load recent scenarios from Lakebase"):
+    try:
+        conn, _ = pg_connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT scenario_id, created_at, question, answer FROM scenarios ORDER BY created_at DESC LIMIT 10")
+            rows = cur.fetchall()
+        conn.close()
+        if not rows:
+            st.info("No saved scenarios yet — save one above.")
+        for scid, ts, question, answer in rows:
+            payload = answer if isinstance(answer, dict) else json.loads(answer or "{}")
+            with st.expander(f"{question}  ·  {ts:%Y-%m-%d %H:%M}"):
+                st.write(f"State: **{payload.get('state')}** · selected region: {payload.get('selected_region')} · buckets: {payload.get('buckets')}")
+                if payload.get("agent_answer"):
+                    st.markdown("**Saved agent recommendation:**")
+                    st.markdown(payload["agent_answer"])
+                else:
+                    st.caption("(no agent recommendation saved with this scenario)")
+    except Exception as e:
+        st.error(f"Load failed: {e}")
