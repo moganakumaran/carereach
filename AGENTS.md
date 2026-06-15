@@ -1,12 +1,13 @@
-# AGENTS.md — Medical Desert Planner
+# AGENTS.md — CareReach (Track 2: Medical Desert Planner)
 
 Context for any AI coding assistant (Claude Code, Cursor, Copilot) working in this repo.
 Read this fully before running commands or editing files.
 
 ## What this is
 
-The **Medical Desert Planner**, built for the Databricks Apps & Agents for Good
-Hackathon 2026 (Data + AI Summit, with OpenAI). **Track 2.**
+**CareReach** (product name; Track 2 brief = "Medical Desert Planner"), built for the
+Databricks Apps & Agents for Good Hackathon 2026 (Data + AI Summit, with OpenAI). **Track 2.**
+Tagline: *Find the real maternal-care deserts — and know which gaps you can trust.*
 
 A non-technical planner asks, in plain language — *"Where should we send a mobile
 maternal-health unit in Bihar?"* — and gets a ranked, evidence-backed,

@@ -1,4 +1,6 @@
-# Medical Desert Planner — DAIS 2026 Hackathon Plan
+# CareReach — DAIS 2026 Hackathon Plan (Track 2: Medical Desert Planner)
+
+*Find the real maternal-care deserts — and know which gaps you can trust.*
 
 **Event:** Databricks Apps & Agents for Good Hackathon 2026 (Data + AI Summit, in partnership with OpenAI)
 **Team:** Guduru *(2–4 members)*
