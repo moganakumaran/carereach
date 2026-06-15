@@ -23,19 +23,19 @@ targets:
     # dev works unchanged in prod — so we deploy exact names in both targets.
     default: true
     workspace:
-      host: https://dbc-c5bb8304-1213.cloud.databricks.com
+      host: https://dbc-d2cc8242-7697.cloud.databricks.com
     variables:
       catalog: mdp
       schema: ${workspace.current_user.short_name}
   prod:
     mode: production
     workspace:
-      host: https://dbc-c5bb8304-1213.cloud.databricks.com
-      # We explicitly deploy to /Workspace/Users/moganakumaran@gmail.com to make sure we only have a single copy.
-      root_path: /Workspace/Users/moganakumaran@gmail.com/.bundle/${bundle.name}/${bundle.target}
+      host: https://dbc-d2cc8242-7697.cloud.databricks.com
+      # Deploy under the current user's workspace home so there's a single copy.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
       catalog: mdp
       schema: prod
     permissions:
-      - user_name: moganakumaran@gmail.com
+      - user_name: mohan.trades.1412@gmail.com
         level: CAN_MANAGE
