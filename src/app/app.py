@@ -124,15 +124,23 @@ def grounded_answer(question: str, vdf: pd.DataFrame, state: str) -> str:
     def fmt(r):
         return (f"{r.region_label} (gap {r.care_gap_score:.2f}, confidence {r.data_confidence_score:.2f}, "
                 f"{int(r.facility_count)} facilities, {int(r.verified_count)} verified obstetric)")
-    real = vdf[vdf.quadrant == "REAL desert (act)"].sort_values("care_gap_score", ascending=False).head(6)
-    poor = vdf[vdf.quadrant == "DATA-POOR (investigate)"].sort_values("care_gap_score", ascending=False).head(6)
-    ctx = ("REAL deserts (high gap, enough data to trust): " + ("; ".join(fmt(r) for _, r in real.iterrows()) or "none")
-           + ".  DATA-POOR (high gap but too little data — investigate, do NOT deploy blindly): "
+    real_all = vdf[vdf.quadrant == "REAL desert (act)"]
+    poor_all = vdf[vdf.quadrant == "DATA-POOR (investigate)"]
+    served_n = int((vdf.quadrant == "adequately served").sum())
+    real = real_all.sort_values("care_gap_score", ascending=False).head(6)
+    poor = poor_all.sort_values("care_gap_score", ascending=False).head(6)
+    ctx = (f"Totals for {state}: {len(real_all)} REAL deserts, {len(poor_all)} DATA-POOR districts, "
+           f"{served_n} adequately served. "
+           "Highest-priority REAL deserts (high gap, enough data to trust): "
+           + ("; ".join(fmt(r) for _, r in real.iterrows()) or "none")
+           + ".  Highest-priority DATA-POOR (high gap but too little data — investigate, do NOT deploy blindly): "
            + ("; ".join(fmt(r) for _, r in poor.iterrows()) or "none") + ".")
     system = ("You are CareReach, a maternal-health deployment planner for India. Answer in <=160 words using ONLY the "
-              "region signals provided. Recommend specific districts to deploy a mobile maternal-health unit FROM the REAL deserts. "
-              "Separately and explicitly flag the DATA-POOR districts as 'investigate first - we lack facility evidence there, they are "
-              "not confirmed deserts'. Cite the numbers and state uncertainty honestly. Never present a data-poor region as a confirmed gap.")
+              "region signals provided. For counts (how many deserts etc.) use the stated Totals, not the length of the example "
+              "lists — the lists show only the highest-priority examples. Recommend specific districts to deploy a mobile "
+              "maternal-health unit FROM the REAL deserts. Separately and explicitly flag the DATA-POOR districts as "
+              "'investigate first - we lack facility evidence there, they are not confirmed deserts'. Cite the numbers and state "
+              "uncertainty honestly. Never present a data-poor region as a confirmed gap.")
     user = f"State focus: {state}.\nPlanner question: {question}\nRegion signals: {ctx}"
     return chat_llm(system, user, max_tokens=400, temperature=0.2)
 
