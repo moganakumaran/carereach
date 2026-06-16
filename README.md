@@ -198,3 +198,13 @@ databricks bundle run mdp_app -t dev -p mdp            # start the hosted app
   demoed in its playground (the `agent/v1/responses` stream isn't captured by the simple app client).
 - District name harmonization (geoBoundaries ↔ NFHS) reaches ~98% facility attribution via alias maps;
   a few duplicate-named districts remain approximate.
+
+## License
+
+Code is released under the **MIT License** (see [`LICENSE`](LICENSE)).
+
+Third-party data & assets, used under their own terms:
+- **geoBoundaries** India ADM2 boundaries — CC-BY 4.0.
+- India map outline (**mapsicon**) — CC.
+- **NFHS-5** district indicators and **India Post** PIN directory — public open data.
+- Facility directory — *Virtue Foundation DAIS 2026* dataset, used per the hackathon terms.
