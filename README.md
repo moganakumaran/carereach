@@ -65,6 +65,30 @@ domains as an honest roadmap state rather than maternal numbers under the wrong 
 
 ---
 
+## The app — design & experience
+
+A single hosted Streamlit app, designed so a **non-technical planner** gets the answer without
+reading a manual — and so the visuals never overpower the data.
+
+- **India-themed, production-clean UI** (`src/app/theme.py`): a tricolor hero with the **Ashoka
+  Chakra**, an **ambulance** motif, and a faint **India-map watermark**; saffron-top/green-bottom
+  page tint and green-railed metric cards. All kept at low opacity so the 2×2 and tables stay
+  fully legible.
+- **Primary view = the 2×2 quadrant** (Altair), not a single choropleth — care gap × evidence
+  confidence, with threshold lines and a color per quadrant, so *real deserts* and *data-poor*
+  regions are visually distinct at a glance. Three count cards (REAL / DATA-POOR / served) sit above it.
+- **Sidebar controls:** **Care domain** (specialty) selector · **Geography level**
+  (state / city / district / pincode) · **state filter**.
+- **Drill-down** for any region: the two scores + raw counts, a **per-region honesty banner**
+  (% inferred geography, % high-confidence claims, % with an evidence quote), a REAL-vs-DATA-POOR
+  verdict, and the underlying facilities with **verified / claimed-but-unverified / no-claim**
+  badges and the **verbatim source sentence**.
+- **Ask the deployment planner** — type a question, or **speak it in an Indian language**; the app
+  shows *Heard (lang) → English* and feeds the grounded answer.
+- **Save / load deployment plans** to Lakebase (the agent's recommendation travels with the plan).
+- A **"How CareReach maps to the brief"** expander makes the four pillars + Databricks stack explicit
+  for reviewers.
+
 ## Architecture
 
 ```mermaid
@@ -114,19 +138,27 @@ Quadrant thresholds: gap ≥ 0.66, confidence ≥ 0.45.
 
 ## Databricks technologies & models
 
-- **Unity Catalog** (catalog/schemas/volume/functions/grants), **Delta**, **Lakeflow Jobs**
-- **Declarative Asset Bundles** + **direct deployment engine**
-- **AI Functions** `ai_query` (structured JSON output) for extraction & verification; the hosted app's
-  **live planner answer + native-language translation** use the chat endpoint with system/user roles
-- **Models:** built with **`databricks-gemini-3-5-flash`**; the live app uses
-  **`databricks-meta-llama-3-3-70b-instruct`** (premium endpoints are rate-limited on Free Edition) ·
-  **`databricks-gte-large-en`** (embeddings)
-- **Mosaic AI Vector Search** (self-managed embeddings)
-- **Geospatial** `ST_Point`/`ST_Contains`/`ST_GeomFromGeoJSON` (GEOMETRY, SRID 4326)
-- **Genie Space**, **Agent Bricks Supervisor**, **UC function tools**
-- **Lakebase** (serverless Postgres) · **Databricks Apps** (hosted Streamlit)
-- **Voice:** in-browser capture (Chrome/Edge) → transcript → translation on Databricks → planner
-- Open data: **geoBoundaries** India ADM2 (CC-BY); India map outline (mapsicon, CC)
+**Platform & governance**
+- **Unity Catalog** — catalog `mdp`, schemas (bronze/silver/gold/ops), volume, **UC functions**, grants (incl. app service-principal grants)
+- **Delta** tables · **Lakeflow Jobs** (bronze_ingest / silver_transform / gold_build)
+- **Declarative Asset Bundles** with the **direct deployment engine** (Terraform-free; required for UC resources)
+
+**Data & geospatial**
+- **Marketplace / Delta Sharing** source (Virtue Foundation DAIS 2026 dataset)
+- **Geospatial SQL** — `ST_Point` / `ST_Contains` / `ST_GeomFromGeoJSON` (GEOMETRY, SRID 4326) for facility→district attribution
+- Open data: **geoBoundaries** India ADM2 (CC-BY), **NFHS-5**, **India Post** PIN directory
+
+**AI & agents**
+- **AI Functions** `ai_query` with structured **JSON-schema** output — capability extraction & per-claim verification
+- **Mosaic AI Vector Search** (self-managed embeddings) for semantic claim/facility search
+- **Agent Bricks Supervisor** + **Genie Space** + scalar **UC function tools** (`fn_verify_capability`, `fn_search_facilities`, `fn_worst_deserts`, `fn_district_summary`, `fn_point_to_district`)
+- **Models:** silver extraction/verification built with **`databricks-gemini-3-5-flash`**; the live app's planner answer + native-language translation use **`databricks-meta-llama-3-3-70b-instruct`** via the **chat-completions endpoint** (system/user roles) — *premium endpoints are rate-limited to 0 on this Free Edition workspace*; embeddings via **`databricks-gte-large-en`**
+
+**App, voice & persistence**
+- **Databricks Apps** — hosted **Streamlit** (`databricks-sdk`, Statement Execution API, **Altair** 2×2, **pandas**)
+- **Voice & multilingual** — in-browser capture (`streamlit-mic-recorder`, Chrome/Edge) → transcript → governed translation on Databricks → planner
+- **Lakebase** (serverless Postgres) — saved plans/sessions/evidence via `psycopg2`, authenticated with a minted **OAuth database credential** (no static password)
+- India map outline (**mapsicon**, CC) used in the themed UI
 
 **Project write-up (≤500 chars):**
 > CareReach turns a noisy 10k-facility India directory + NFHS-5 + PIN geography into a governed
@@ -136,6 +168,16 @@ Quadrant thresholds: gap ≥ 0.66, confidence ≥ 0.45.
 > Indian languages, and saves plans to Lakebase. Specialty-agnostic; maternal is the grounded vertical.
 
 ---
+
+## How it maps to the judging criteria
+
+| Criterion | CareReach |
+|---|---|
+| **Business Applicability** | Maternal mortality in high-burden states (Bihar/UP) is an urgent, real planning problem; the output mirrors how planners already think in *medical deserts*, and produces a saveable deployment plan. |
+| **Data Relevance** | Combines all three provided/enrichment datasets (facility directory + India-Post PIN + NFHS-5) plus geoBoundaries, across a governed medallion pipeline, with `ai_query`, Vector Search, geospatial SQL, Agent Bricks, Lakebase, and a hosted App. |
+| **Creativity** | **Two never-collapsed signals** (gap × evidence confidence) so a *data-poor* region is never mislabeled a confirmed desert — plus native-language voice questions. |
+| **Thoroughness** | Drill-down to verbatim evidence, per-region honesty banners, verified/claimed/no-claim badges, an in-app "maps to the brief" guide, and tested multilingual outputs (`docs/voice_demo_questions.md`). |
+| **Well-Architected** | Reproducible from a clean clone via one bundle; specialty-agnostic engine (add a domain = wire its burden signal, no rewrite); linear-cost SQL/`ai_query`, no bespoke infrastructure. |
 
 ## Run it from a clean clone
 
