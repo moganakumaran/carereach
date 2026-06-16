@@ -168,34 +168,50 @@ def pg_connect():
     Auth is identity-based: the username MUST match the identity the token was minted for. The
     token is minted by the app's own service principal, so `current_user.me()` (the SP's app id)
     is the authoritative username — it's the federated Postgres role that actually exists. We try
-    that first, then fall back to the binding's PGUSER in case the platform differs."""
+    that first, then fall back to the binding's PGUSER in case the platform differs.
+
+    HOST: the binding's PGHOST can be STALE after the instance is recreated (same name, new DNS
+    endpoint) — it keeps pointing at the dead endpoint. So we resolve the *live* DNS from the SDK
+    first and only fall back to PGHOST. We try every (host, user) pair until one connects."""
     import psycopg2
     token = w().database.generate_database_credential(
         request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE]).token
-    host = os.environ.get("PGHOST")
-    if not host:
-        host = w().database.get_database_instance(name=PG_INSTANCE).read_write_dns
     port = os.environ.get("PGPORT", "5432")
     dbname = os.environ.get("PGDATABASE", PG_DATABASE)
     sslmode = os.environ.get("PGSSLMODE", "require")
+
+    # Live DNS from the SDK takes priority over the (possibly stale) injected PGHOST.
+    live_dns = None
+    try:
+        live_dns = w().database.get_database_instance(name=PG_INSTANCE).read_write_dns
+    except Exception:
+        live_dns = None
     try:
         token_identity = w().current_user.me().user_name
     except Exception:
         token_identity = None
-    # Candidate usernames in priority order: token's own identity, then binding PGUSER.
-    candidates, seen = [], set()
-    for u in (token_identity, os.environ.get("PGUSER")):
-        if u and u not in seen:
-            candidates.append(u); seen.add(u)
+
+    def _dedup(xs):
+        out, seen = [], set()
+        for x in xs:
+            if x and x not in seen:
+                out.append(x); seen.add(x)
+        return out
+
+    # Priority: live DNS from SDK → explicit MDP_PG_HOST config → binding PGHOST (may be stale).
+    hosts = _dedup([live_dns, os.environ.get("MDP_PG_HOST"), os.environ.get("PGHOST")])
+    users = _dedup([token_identity, os.environ.get("PGUSER")])
     last_err = None
-    for user in candidates:
-        try:
-            conn = psycopg2.connect(host=host, port=port, dbname=dbname, user=user,
-                                    password=token, sslmode=sslmode)
-            return conn, f"ok(user={user})"
-        except Exception as e:
-            last_err = e
-    raise RuntimeError(f"Lakebase auth failed for users {candidates}: {last_err}")
+    for host in hosts:
+        for user in users:
+            try:
+                conn = psycopg2.connect(host=host, port=port, dbname=dbname, user=user,
+                                        password=token, sslmode=sslmode)
+                return conn, f"ok(host={host.split('.')[0]}, user={user})"
+            except Exception as e:
+                last_err = e
+    raise RuntimeError(f"Lakebase auth failed (hosts={[h.split('.')[0] for h in hosts]}, "
+                       f"users={users}): {last_err}")
 
 
 # --------------------------------------------------------------------------- UI

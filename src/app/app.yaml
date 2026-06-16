@@ -10,3 +10,7 @@ env:
     value: mdp-pg
   - name: MDP_PG_DATABASE
     value: mdp_app
+  # Deterministic fallback for the live Lakebase endpoint: the binding's injected PGHOST can go
+  # stale after the instance is recreated (same name, new DNS). Update if the instance is recreated.
+  - name: MDP_PG_HOST
+    value: ep-winter-pine-d8f8a9ty.database.us-east-2.cloud.databricks.com
