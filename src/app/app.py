@@ -48,7 +48,9 @@ f AS (
   FROM f0)
 """
 
-st.set_page_config(page_title="CareReach", layout="wide")
+st.set_page_config(page_title="CareReach", page_icon="🩺", layout="wide")
+import theme
+theme.inject_theme()
 
 
 @st.cache_resource
@@ -197,9 +199,8 @@ def pg_connect():
 
 
 # --------------------------------------------------------------------------- UI
-st.title("🩺 CareReach")
-st.caption("Find the real maternal-care deserts — and know which gaps you can trust. "
-           "Two signals, never collapsed: **where are the care gaps** × **how confident are we they're real vs. just data-poor**.")
+theme.render_hero()
+st.caption("Two signals, never collapsed: **where are the care gaps** × **how confident are we they're real vs. just data-poor**.")
 
 level = st.sidebar.radio("Geography level", ["district", "state", "city", "pincode"], index=0)
 df = load_level(level)

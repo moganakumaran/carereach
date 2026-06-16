@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#138808"           # India green — buttons, selected controls
+backgroundColor = "#fbfbf8"
+secondaryBackgroundColor = "#fff3e6" # faint saffron — sidebar / inputs
+textColor = "#1f2430"
+font = "sans serif"
