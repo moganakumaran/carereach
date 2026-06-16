@@ -7,12 +7,15 @@ Read this fully before running commands or editing files.
 
 **CareReach** (product name; Track 2 brief = "Medical Desert Planner"), built for the
 Databricks Apps & Agents for Good Hackathon 2026 (Data + AI Summit, with OpenAI). **Track 2.**
-Tagline: *Find the real maternal-care deserts — and know which gaps you can trust.*
+Tagline: *Find India's real, highest-risk maternal-care gaps — and know which you can trust.*
 
-A non-technical planner asks, in plain language — *"Where should we send a mobile
-maternal-health unit in Bihar?"* — and gets a ranked, evidence-backed,
-uncertainty-aware answer they can save and revisit. The app surfaces medical
-deserts: districts with high health burden and low *verified* facility coverage.
+A non-technical planner asks, in plain language (or by **voice, in their own Indian
+language**) — *"Where should we send a mobile maternal-health unit in Bihar?"* — and gets a
+ranked, evidence-backed, uncertainty-aware answer they can save and revisit. The app surfaces
+maternal-care deserts using **two signals, never collapsed** (care gap × evidence confidence),
+so a region we're simply *data-poor* about is never mislabeled a confirmed desert. Maternal is
+the live, NFHS-grounded vertical; the engine is specialty-agnostic (a *Care domain* selector
+makes this explicit). See `README.md` for the as-built description.
 
 ## Operating rules (do not violate)
 
@@ -49,20 +52,27 @@ CLI, app development, job orchestration, Lakebase, and Spark Declarative Pipelin
 Division of labour: **the skills know how Databricks works; this AGENTS.md knows
 how this project works.** Prefer the skills for command/syntax details.
 
-## Optional voice & multilingual layer (Phase 8.5)
+## Voice & multilingual layer (shipped)
 
-Only if the text demo (through Phase 8) is fully working and time remains:
-- Tier 1 only: browser mic → Whisper Large V3 (Model Serving) or OpenAI STT (via
-  AI Gateway) → existing supervisor agent; `ai_translate` for Hindi/regional input
-  and output; TTS for playback. No real-time voice, no video.
-- Honesty rule: spoken output must still state confidence + caveats; map/evidence
-  drawer stay the source of truth.
-- Governance: transcripts (not raw audio unless needed) stored in Lakebase under
-  Unity Catalog, short retention.
+- Planner can **ask by voice in a native Indian language** (Hindi, Bengali, Tamil, Telugu,
+  Marathi, …). In-browser capture (Chrome/Edge) → transcript → **translation on Databricks**
+  (chat endpoint, system/user roles) → fed into the same grounded planner flow. The "Heard
+  (lang) → English" line is shown so the planner can confirm before asking.
+- Honesty rule: the translated question runs through the same evidence-grounded path; the 2×2,
+  drill-down, and honesty banners stay the source of truth. A failed transcription shows a retry
+  prompt, never a silent no-op.
+- Caveat: transcription uses a free best-effort browser recognizer; production would swap in a
+  hosted Whisper endpoint. Translation is governed on Databricks.
 
-## Architecture (target)
+## Architecture
 
-- **UI:** Databricks App (map + chat + evidence drawer + honesty banner + save).
+> **As built:** the planner answer is a **deterministic, evidence-only LLM call grounded in
+> `mdp.gold.region_signals`** (chat endpoint) — fast and reproducible for the demo. The Agent
+> Bricks Supervisor + Genie Space exist and are demoed in the playground; verification ships as
+> scalar **UC functions** (`fn_verify_capability`, `fn_search_facilities`) rather than a full
+> MLflow ResponsesAgent. The items below are the original target design.
+
+- **UI:** Databricks App (2×2 quadrant + drill-down + voice + evidence + honesty banner + save plan).
 - **Orchestration:** Agent Bricks Supervisor Agent (no hard-coded routing).
 - **Specialists the supervisor coordinates:**
   - Genie Space over `mdp.gold.*` (natural language to SQL).
@@ -98,26 +108,34 @@ Catalog `mdp`. Schemas: `bronze`, `silver`, `gold`, `ops`.
 - `mdp.gold.facility` — one row per facility. Columns include: `facility_id`,
   `district_id`, capability flags + per-flag `confidence`, `geo_inferred`,
   `evidence_ref` (pointer to source record + claim sentence).
-- `mdp.gold.district_desert` — one row per district. Columns include:
-  `district_id`, `verified_coverage`, `burden_score`, `accessibility_score`,
-  `desert_score`, plus the counts behind each.
+- `mdp.gold.region_signals` — **one row per region per geo level** (state/city/district/pincode).
+  Columns: `geo_level`, `region_key`, `region_label`, `state_ut`, **`care_gap_score`**,
+  **`data_confidence_score`**, plus the raw counts behind both (`facility_count`,
+  `verified_count`, `high_conf_count`, `geocoded_count`, `inferred_count`, `evidence_count`).
+  This is the table the app reads.
 
-## Desert-score definition
+## Two-signal definition (never collapse them)
+
+The headline design choice: **need** and **evidence** are scored separately so a data-poor
+region is never mislabeled a confirmed desert.
 
 ```
-desert_score = w1 * burden_score
-             + w2 * (1 - normalized_verified_coverage)
-             + w3 * accessibility_score
+care_gap_score (district)   = 0.5 * burden + 0.35 * (1 - verified_coverage) + 0.15 * accessibility
+care_gap_score (other levels) = 0.55 * burden_norm + 0.45 * (1 - verified_norm)
+data_confidence_score       = 0.40 * count_score + 0.25 * high_conf_share
+                            + 0.20 * geocoded_share + 0.15 * evidence_share
 ```
-- Higher score = worse desert (high need, low verified supply, poor access).
-- `verified_coverage` counts **only** facilities whose relevant capability is
-  verified — a facility that cannot credibly perform C-sections does NOT count
-  toward maternal coverage.
-- `burden_score` derives from NFHS-5 indicators (maternal, child, anaemia, NCD),
-  normalized 0–1.
-- `accessibility_score` is a travel-time proxy, normalized 0–1.
-- Default weights w1=0.5, w2=0.35, w3=0.15 — tune and document any change.
-- All inputs normalized 0–1 before weighting.
+- Higher `care_gap_score` = more underserved (high need, low *verified* supply, poor access).
+- `verified_coverage` counts **only** facilities whose relevant capability is verified — a
+  facility that cannot credibly perform C-sections does NOT count toward maternal coverage.
+- `burden` derives from NFHS-5 indicators (maternal/child/anaemia/NCD), normalized 0–1.
+- `data_confidence_score` = how much verified facility evidence backs the gap.
+- **Quadrants** (thresholds gap ≥ 0.66, confidence ≥ 0.45): `REAL desert (act)` =
+  high gap + high confidence · `DATA-POOR (investigate)` = high gap + low confidence ·
+  `adequately served` = low gap. All inputs normalized 0–1 before weighting.
+- **Models:** silver extraction/verification built with `databricks-gemini-3-5-flash`; the live
+  app's planner answer + native-language translation use `databricks-meta-llama-3-3-70b-instruct`
+  (premium endpoints are rate-limited to 0 on this Free Edition workspace).
 
 ## Naming conventions
 

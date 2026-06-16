@@ -7,6 +7,13 @@
 **Track chosen:** Track 2 — Medical Desert Planner
 **One-liner:** A non-technical planner asks, in plain language, *"Where should we send a mobile maternal-health unit in Bihar?"* — and gets a ranked, evidence-backed, uncertainty-aware answer they can save and revisit.
 
+> **Implementation note (live app).** This is the Day-1 plan; the shipped app refines it in a few important ways — see `README.md` for the as-built description:
+> - **Two signals, never collapsed.** Instead of one desert score, every region gets `care_gap_score` × `data_confidence_score`, shown as a **2×2** (REAL desert · DATA-POOR-investigate · adequately served), so a data-poor region is never mislabeled a confirmed desert. Lives in `mdp.gold.region_signals` (per region, per geo level).
+> - **Planner answer** is a deterministic, evidence-only LLM call grounded in `region_signals`; the Agent Bricks supervisor + Genie are demoed in the playground.
+> - **Voice & multilingual** input shipped: ask by voice in an Indian language → translated on Databricks → same grounded flow.
+> - **Care-domain selector** makes maternal a configurable, generalizable vertical (engine is specialty-agnostic; maternal is live because NFHS gives it real burden data).
+> - **Models:** built with `gemini-3-5-flash`; the live app uses `databricks-meta-llama-3-3-70b-instruct` (premium endpoints are rate-limited on Free Edition).
+
 ---
 
 ## 1. Why Track 2
