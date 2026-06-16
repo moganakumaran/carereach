@@ -160,6 +160,31 @@ Quadrant thresholds: gap ≥ 0.66, confidence ≥ 0.45.
 - **Lakebase** (serverless Postgres) — saved plans/sessions/evidence via `psycopg2`, authenticated with a minted **OAuth database credential** (no static password)
 - India map outline (**mapsicon**, CC) used in the themed UI
 
+### Engineering decisions (the *why*)
+
+The choices behind the stack — each was a real trade-off, not a default:
+
+- **Direct deployment engine** (`DATABRICKS_BUNDLE_ENGINE=direct`) — Terraform-free. Required for UC
+  catalog resources, and sidesteps the CLI's Terraform `openpgp: key expired` download failure.
+- **`ai_query` model choice was benchmarked**, not assumed: `gemini-3-5-flash` extracted 10k facilities
+  in ~5 min; `gpt-oss-120b` projected ~4.7 hr; `llama-3.1-8b` was fast but **over-claimed** (e.g. 60% C-section).
+  A 30-facility hand-labelled gate (≥80% agreement) had to pass before building gold on the claims.
+- **Self-managed Vector Search embeddings** — precomputing embeddings with `ai_query` (~7 min) instead
+  of delta-sync auto-embed (~1 row/s ≈ 3 hr); the index then ingests in ~40 s.
+- **Two signals, never collapsed** — the headline design call: scoring *need* and *evidence* separately
+  is what prevents a data-poor region from masquerading as a confirmed desert.
+- **Scalar UC functions for agent tools** — Agent Bricks can't register table-valued functions, so the
+  tools are scalar `*_json` wrappers (TVFs kept for Genie/SQL).
+- **Chat-completions with system/user roles** (not a single `ai_query` string) — role separation stops
+  the model from *answering* a translated question instead of translating it, and fixed a regression
+  when premium endpoints were disabled (switched the live path to `llama-3-3-70b`).
+- **Lakebase auth without static passwords** — the app mints a short-lived **OAuth database credential**
+  and connects as the service principal's own federated Postgres role (token identity), with explicit DML grants.
+- **Fan-out guards** — the PIN directory is post-office-grain and the bronze facilities had duplicate
+  IDs; both are deduped *before* joins so the silver/region grain stays correct (verified by SQL assertions).
+- **Honest geography** — facilities without coordinates are `ST_Contains`-failed → pincode fallback →
+  flagged `geo_inferred`, never dropped or presented as exact; district names harmonized via alias maps (~98% attribution).
+
 **Project write-up (≤500 chars):**
 > CareReach turns a noisy 10k-facility India directory + NFHS-5 + PIN geography into a governed
 > medallion pipeline on Databricks. AI extracts capability *claims*; an LLM auditor + Vector Search
