@@ -32,31 +32,29 @@ flag as confirmed gaps.
 
 For each region we compute two normalized scores in $[0,1]$.
 
-**Care gap** (need + unmet supply). At the district level:
+**Care gap** (need + unmet supply), at the district level:
 
 $$
-\text{care\_gap} = 0.5\,\underbrace{B}_{\text{NFHS burden}} \;+\; 0.35\,\bigl(1 - C_v\bigr) \;+\; 0.15\,A
+\text{care gap} = 0.5 \cdot B + 0.35 \cdot (1 - C_v) + 0.15 \cdot A
 $$
 
-where $C_v$ is **verified** obstetric coverage (a facility only counts if its capability is
-verified) and $A$ is an accessibility proxy.
+where $B$ is the NFHS health-burden index, $C_v$ is **verified** obstetric coverage (a facility
+only counts if its capability is verified), and $A$ is an accessibility proxy.
 
 **Evidence confidence** (can we trust the gap?):
 
 $$
-\text{data\_conf} = 0.40\,S_{\text{count}} + 0.25\,S_{\text{high\_conf}} + 0.20\,S_{\text{geocoded}} + 0.15\,S_{\text{evidence}}
+\text{data conf} = 0.40 \cdot S_{count} + 0.25 \cdot S_{highconf} + 0.20 \cdot S_{geocoded} + 0.15 \cdot S_{evidence}
 $$
 
-A region is then assigned to a quadrant using two thresholds:
+A region's quadrant is then set by two thresholds — $\text{care gap} \ge 0.66$ and
+$\text{data conf} \ge 0.45$:
 
-$$
-\text{quadrant} =
-\begin{cases}
-\textbf{REAL desert} & \text{if } \text{care\_gap} \ge 0.66 \;\wedge\; \text{data\_conf} \ge 0.45\\[2pt]
-\textbf{DATA-POOR} & \text{if } \text{care\_gap} \ge 0.66 \;\wedge\; \text{data\_conf} < 0.45\\[2pt]
-\textbf{adequately served} & \text{otherwise}
-\end{cases}
-$$
+| Care gap | Evidence confidence | Quadrant |
+|---|---|---|
+| $\ge 0.66$ | $\ge 0.45$ | **REAL desert** — act |
+| $\ge 0.66$ | $< 0.45$ | **DATA-POOR** — investigate first |
+| $< 0.66$ | — | **adequately served** |
 
 The key property: a high gap with low evidence is **never** rendered as a confirmed desert.
 
