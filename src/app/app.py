@@ -48,7 +48,7 @@ f AS (
   FROM f0)
 """
 
-st.set_page_config(page_title="CareReach", page_icon="🩺", layout="wide")
+st.set_page_config(page_title="CareReach · Medical Desert Planner", page_icon="🩺", layout="wide")
 import theme
 theme.inject_theme()
 
@@ -200,7 +200,9 @@ def pg_connect():
 
 # --------------------------------------------------------------------------- UI
 theme.render_hero()
-st.caption("Two signals, never collapsed: **where are the care gaps** × **how confident are we they're real vs. just data-poor**.")
+st.caption("Turning **10,000 messy facility records** into maternal-health deployment decisions a planner can trust — "
+           "*extract structure · show evidence · communicate uncertainty honestly · persist the plan*. "
+           "Two signals, never collapsed: **where the care gaps are** × **how confident we are they're real, not just data-poor**.")
 
 level = st.sidebar.radio("Geography level", ["district", "state", "city", "pincode"], index=0)
 df = load_level(level)
@@ -209,12 +211,17 @@ state_filter = st.sidebar.selectbox("Filter by state", states, index=(states.ind
 view = df if state_filter == "(all)" else df[df["state_ut"] == state_filter]
 
 counts = view["quadrant"].value_counts().to_dict()
+scope = "across India" if state_filter == "(all)" else f"in {state_filter}"
+st.markdown(f"#### Where to act {scope} — at a glance")
 c1, c2, c3 = st.columns(3)
-c1.metric("🔴 REAL deserts (act)", counts.get("REAL desert (act)", 0))
-c2.metric("🟠 DATA-POOR (investigate)", counts.get("DATA-POOR (investigate)", 0))
-c3.metric("🟢 Adequately served", counts.get("adequately served", 0))
+c1.metric("🔴 REAL deserts — act", counts.get("REAL desert (act)", 0),
+          help="High maternal-care gap AND enough verified facility evidence to trust it. Deploy here.")
+c2.metric("🟠 DATA-POOR — investigate", counts.get("DATA-POOR (investigate)", 0),
+          help="High gap but too little facility evidence — could be a desert or just unmapped. Investigate before deploying.")
+c3.metric("🟢 Adequately served", counts.get("adequately served", 0),
+          help="Care gap below the action threshold.")
 
-st.subheader("💬 Ask the planner agent")
+st.subheader("💬 Ask the deployment planner — in any language")
 
 # Voice input: speak in a native language → speech-to-text → translate to English on Databricks
 # → feeds the same planner flow. Mic capture is in-browser (Chrome/Edge); transcription uses the
@@ -299,17 +306,18 @@ if st.session_state.get("agent_answer"):
     if st.session_state.get("agent_supervisor"):
         with st.expander("Agent Bricks supervisor (multi-agent) response"):
             st.markdown(st.session_state["agent_supervisor"])
-    st.caption("Grounded in mdp.gold.region_signals — recommends REAL deserts to act on and flags DATA-POOR regions to investigate first.")
+    st.caption("Grounded only in verified facility evidence (`mdp.gold.region_signals`) — recommends REAL deserts to act on and "
+               "explicitly flags DATA-POOR regions as investigate-first. Never presents a data-poor region as a confirmed gap.")
 
 left, right = st.columns([3, 2])
 with left:
-    st.subheader(f"2×2 — care gap × data confidence ({level}{'' if state_filter=='(all)' else ', '+state_filter})")
+    st.subheader(f"Where are the real gaps? — care gap × evidence confidence ({level}{'' if state_filter=='(all)' else ', '+state_filter})")
     try:
         import altair as alt
         base = alt.Chart(view)
         pts = base.mark_circle(size=90, opacity=0.6).encode(
-            x=alt.X("data_confidence_score", title="Data confidence  →  (trust the gap)", scale=alt.Scale(domain=[0, 1])),
-            y=alt.Y("care_gap_score", title="Care gap  →  (worse)", scale=alt.Scale(domain=[0, 1])),
+            x=alt.X("data_confidence_score", title="Evidence confidence  →  (can we trust the gap?)", scale=alt.Scale(domain=[0, 1])),
+            y=alt.Y("care_gap_score", title="Maternal-care gap  →  (more underserved)", scale=alt.Scale(domain=[0, 1])),
             color=alt.Color("quadrant", scale=alt.Scale(
                 domain=["REAL desert (act)", "DATA-POOR (investigate)", "adequately served"],
                 range=["#d62728", "#ff7f0e", "#2ca02c"])),
@@ -325,15 +333,15 @@ with left:
         st.scatter_chart(view, x="data_confidence_score", y="care_gap_score", color="quadrant")
 
 with right:
-    st.subheader("Regions")
+    st.subheader("All regions, ranked by care gap")
     st.dataframe(view.sort_values("care_gap_score", ascending=False)
                  [["region_label", "quadrant", "care_gap_score", "data_confidence_score", "facility_count", "verified_count"]],
                  hide_index=True, use_container_width=True, height=360)
 
 st.divider()
-st.subheader("Drill-down — why is this region flagged?")
+st.subheader("Drill-down — the evidence behind the flag")
 opts = view.sort_values("care_gap_score", ascending=False)["region_label"].tolist()
-sel = st.selectbox("Region", opts)
+sel = st.selectbox("Pick a region to inspect", opts)
 if sel:
     r = view[view["region_label"] == sel].iloc[0]
     q = r["quadrant"]
@@ -341,9 +349,9 @@ if sel:
     st.markdown(f"### {icon} {sel} — **{q}**")
     fc = int(r["facility_count"])
     a, b, c, d = st.columns(4)
-    a.metric("Care gap", f"{r['care_gap_score']:.3f}")
-    b.metric("Data confidence", f"{r['data_confidence_score']:.3f}")
-    c.metric("Facilities (evidence)", fc)
+    a.metric("Maternal-care gap", f"{r['care_gap_score']:.3f}")
+    b.metric("Evidence confidence", f"{r['data_confidence_score']:.3f}")
+    c.metric("Facilities on record", fc)
     d.metric("Verified obstetric", int(r["verified_count"]))
     # Honesty banner for THIS region
     if fc > 0:
@@ -362,7 +370,7 @@ if sel:
     if fc > 0:
         try:
             facs = drill_facilities(level, r["region_key"])
-            st.write(f"Underlying facilities ({len(facs)} shown):")
+            st.write(f"**Facility evidence ({len(facs)} shown)** — capabilities are *claims we verify, not ground truth*:")
             st.caption("✅ verified · 🟡 claimed but unverified · ⬜ no maternal-care claim")
             for _, f in facs.iterrows():
                 ob = str(f["obstetrics_verified"]).lower() == "true"
@@ -386,15 +394,16 @@ if sel:
             st.error(f"facility drill-down failed: {e}")
 
 st.divider()
-st.subheader("Save scenario")
+st.subheader("📝 Save this deployment plan")
+st.caption("Persist your work — the question, the regions in scope, and the agent's recommendation — to **Lakebase** so you can reopen and act on it later.")
 agent_q = st.session_state.get("agent_q")
 agent_answer = st.session_state.get("agent_answer")
-note = st.text_input("Question / note", value=agent_q or f"Where in {state_filter} should we deploy a mobile maternal-health unit?")
+note = st.text_input("Name this plan", value=agent_q or f"Where in {state_filter} should we deploy a mobile maternal-health unit?")
 if agent_answer:
-    st.caption("✓ The planner agent's recommendation will be saved with this scenario.")
+    st.caption("✓ The planner's recommendation will be saved with this plan.")
 else:
-    st.caption("Tip: use **Ask the planner agent** above first — its recommendation is saved with the scenario.")
-if st.button("💾 Save scenario to Lakebase"):
+    st.caption("Tip: use **Ask the deployment planner** above first — its recommendation is saved with the plan.")
+if st.button("💾 Save plan to Lakebase"):
     pg_keys = sorted([k for k in os.environ if k.startswith(("PG", "POSTGRES", "DATABRICKS_DATABASE")) or "DATABASE_URL" in k])
     payload = {"level": level, "state": state_filter, "selected_region": sel,
                "quadrant": view[view.region_label == sel]["quadrant"].iloc[0] if sel else None,
@@ -412,13 +421,13 @@ if st.button("💾 Save scenario to Lakebase"):
                         (sid, note, state_filter, json.dumps(payload)))
             scid = cur.fetchone()[0]
         conn.close()
-        st.success(f"Saved scenario {scid} via {src} auth — including the agent's recommendation. Open it below.")
+        st.success(f"Saved plan {scid} via {src} auth — including the agent's recommendation. Open it below.")
     except Exception as e:
         st.error(f"Save failed [pg env: {', '.join(pg_keys) or 'none'}]: {e}")
 
 st.divider()
-st.subheader("📂 Saved scenarios (reopen)")
-if st.button("Load recent scenarios from Lakebase"):
+st.subheader("📂 Saved deployment plans (reopen)")
+if st.button("Load recent plans from Lakebase"):
     try:
         conn, _ = pg_connect()
         with conn.cursor() as cur:
@@ -426,7 +435,7 @@ if st.button("Load recent scenarios from Lakebase"):
             rows = cur.fetchall()
         conn.close()
         if not rows:
-            st.info("No saved scenarios yet — save one above.")
+            st.info("No saved plans yet — save one above.")
         for scid, ts, question, answer in rows:
             payload = answer if isinstance(answer, dict) else json.loads(answer or "{}")
             with st.expander(f"{question}  ·  {ts:%Y-%m-%d %H:%M}"):
@@ -435,6 +444,21 @@ if st.button("Load recent scenarios from Lakebase"):
                     st.markdown("**Saved agent recommendation:**")
                     st.markdown(payload["agent_answer"])
                 else:
-                    st.caption("(no agent recommendation saved with this scenario)")
+                    st.caption("(no agent recommendation saved with this plan)")
     except Exception as e:
         st.error(f"Load failed: {e}")
+
+# ---- How CareReach maps to the brief (for judges / reviewers) ----
+st.divider()
+with st.expander("ℹ️  How CareReach maps to the brief & runs on Databricks"):
+    st.markdown(
+        "**The four planner needs (Track 2 brief):**\n"
+        "- **Extract structure** — an LLM (`ai_query`) turns each facility's free-text into typed capability *claims* with confidence.\n"
+        "- **Show evidence** — every flag drills down to the facilities, verified badges, and the *verbatim source sentence*.\n"
+        "- **Communicate uncertainty honestly** — two never-collapsed signals (care gap × evidence confidence) so a *data-poor* "
+        "region is never mislabeled a confirmed desert; per-region honesty banners spell out coverage.\n"
+        "- **Persist the work** — plans + the agent's recommendation are saved to **Lakebase** (serverless Postgres).\n\n"
+        "**Built on Databricks Free Edition:** Unity Catalog (bronze→silver→gold) · `ai_query` extraction & verification · "
+        "Mosaic AI **Vector Search** · **Agent Bricks** supervisor · **Lakebase** persistence · hosted **Databricks App**. "
+        "Capabilities are treated as *claims to verify, not ground truth* — an LLM auditor adjudicates each one."
+    )

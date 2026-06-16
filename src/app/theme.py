@@ -32,7 +32,10 @@ section[data-testid="stSidebar"] { border-top:5px solid #FF9933; box-shadow:inse
 .cr-title { font-size:2.1rem; font-weight:800; line-height:1.05; color:#0b3d91;
   letter-spacing:-0.5px; margin:0; }
 .cr-title .pin { color:#e63946; }
-.cr-sub { font-size:0.95rem; color:#555; margin-top:3px; }
+.cr-tag { display:inline-block; font-size:0.72rem; font-weight:700; letter-spacing:0.4px;
+  text-transform:uppercase; color:#0b3d91; background:rgba(11,61,145,0.08);
+  border:1px solid rgba(11,61,145,0.18); border-radius:20px; padding:2px 10px; margin-bottom:5px; }
+.cr-sub { font-size:0.95rem; color:#555; margin-top:4px; max-width:620px; }
 
 /* Metric cards float above the watermark */
 div[data-testid="stMetric"] { background:rgba(255,255,255,0.92); border:1px solid #ececec;
@@ -46,8 +49,9 @@ _AMB = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 80" class="cr-a
 
 _HERO = (
   '<div class="cr-hero"><div class="cr-hero-left">' + _CHAKRA +
-  '<div><div class="cr-title">Care<span class="pin">Reach</span></div>'
-  '<div class="cr-sub">Find the real maternal-care deserts across India — and know which gaps you can trust.</div>'
+  '<div><span class="cr-tag">Track 2 · Medical Desert Planner · India</span>'
+  '<div class="cr-title">Care<span class="pin">Reach</span></div>'
+  '<div class="cr-sub">Find India\'s real, highest-risk maternal-care gaps — and know which you can trust.</div>'
   '</div></div>' + _AMB + '</div>'
 )
 
