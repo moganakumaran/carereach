@@ -129,16 +129,24 @@ def supervisor_answer(question: str):
 
 
 def pg_connect():
-    """Connect to Lakebase: prefer the binding-injected PG* env, else mint a credential."""
+    """Connect to Lakebase. The `database` app-resource binding injects PGHOST/PGUSER/PGPORT/
+    PGDATABASE/PGSSLMODE (PGUSER = the SP's federated Postgres role) but NOT a password, so we
+    mint a short-lived OAuth token as the password. Use PGUSER from the binding (authoritative),
+    NOT current_user — they differ for a service principal."""
     import psycopg2
-    if os.environ.get("PGHOST") and os.environ.get("PGUSER") and os.environ.get("PGPASSWORD"):
-        return psycopg2.connect(host=os.environ["PGHOST"], port=os.environ.get("PGPORT", "5432"),
-            dbname=os.environ.get("PGDATABASE", PG_DATABASE), user=os.environ["PGUSER"],
-            password=os.environ["PGPASSWORD"], sslmode=os.environ.get("PGSSLMODE", "require")), "binding"
-    cred = w().database.generate_database_credential(request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE])
+    token = w().database.generate_database_credential(
+        request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE]).token
+    host = os.environ.get("PGHOST")
+    if host:
+        user = os.environ.get("PGUSER")
+        pw = os.environ.get("PGPASSWORD") or token
+        return psycopg2.connect(host=host, port=os.environ.get("PGPORT", "5432"),
+            dbname=os.environ.get("PGDATABASE", PG_DATABASE), user=user, password=pw,
+            sslmode=os.environ.get("PGSSLMODE", "require")), f"binding(user={user})"
     inst = w().database.get_database_instance(name=PG_INSTANCE)
+    user = os.environ.get("PGUSER") or w().current_user.me().user_name
     return psycopg2.connect(host=inst.read_write_dns, port=5432, dbname=PG_DATABASE,
-        user=w().current_user.me().user_name, password=cred.token, sslmode="require"), "generated"
+        user=user, password=token, sslmode="require"), f"generated(user={user})"
 
 
 # --------------------------------------------------------------------------- UI
