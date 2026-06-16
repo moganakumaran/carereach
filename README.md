@@ -136,6 +136,55 @@ Quadrant thresholds: gap ≥ 0.66, confidence ≥ 0.45.
 
 ---
 
+## Data preparation (bronze → silver → gold)
+
+The hard part of this challenge is the data, not the model. Here's how the messy inputs become a
+table a planner can trust. *(SQL in `src/pipelines/{bronze,silver,gold}`; every layer is gated by
+`tests/*_assertions.sql`.)*
+
+### Profiling first (what the raw data actually is)
+- **facilities** — 10,088 rows × 51 cols, but **global**: exactly **10,000 are `countryCode='IN'`**, and
+  ~88 rows are garbled/misaligned from CSV quote-bleed → silver filters to India and quarantines bad rows.
+- Structured coverage is **sparse and uneven**: `capacity` ~25% numeric, `yearEstablished` ~47% valid,
+  `numberDoctors` ~36% — so these are treated as hints, never hard inputs.
+- The capability fields (`specialties`/`procedure`/`equipment`/`capability`) are **JSON arrays of free
+  text** with duplicates and empty entries — the "claims, not facts" surface.
+- **NFHS-5** ships many `*_pct` columns as *strings* with `*` for suppressed/small-sample values.
+- The dataset has **no district polygons** → we bring in external **geoBoundaries** India ADM2.
+
+### Bronze — faithful raw landing
+- `facilities` (10,088×51), `pincode` (India Post, 165,627), `nfhs5` (706×109), and `district_boundaries`
+  (geoBoundaries ADM2, 735 polygons). Idempotent `CREATE OR REPLACE`; row/column-count assertions.
+
+### Silver — clean + structure (the heavy lifting)
+- **AI claim extraction** — `ai_query` (`gemini-3-5-flash`, JSON-schema) turns each India facility's free
+  text into typed flags (`obstetrics`, `csection`, `icu`, …) **each with a confidence** → `facility_claims`
+  (10,000 rows). Gated by a 30-facility hand-label check (≥80% agreement) before anything builds on it.
+- **NFHS cleaning** — `nfhs5_district` (706): `*` → `NULL` (never 0), 49 percentage columns cast to numeric,
+  small-sample estimates flagged low-confidence, keys normalized.
+- **PIN dedup before any join** — the directory's grain is *post office*, not PIN; collapsed from 165,627
+  rows to **19,586 unique pincodes** at district grain to prevent join fan-out.
+- **Spatial attribution** — each facility placed in a district via `ST_Contains(polygon, st_setsrid(st_point(lon,lat),4326))`,
+  with a **pincode fallback** when coordinates are missing; rows are flagged `geo_inferred` (~0.38%) — never dropped.
+- **Dedup** — 11 duplicate `unique_id`s in the source are collapsed via `QUALIFY` → **9,989 unique facilities**.
+- **Vector Search source** — `facility_search` carries a **self-managed 1024-dim `gte-large-en` embedding**
+  (precomputed with `ai_query`), with Change Data Feed + 30-day retention.
+
+### Gold — decision-ready
+- `facility` (9,989) — verified capability flags + evidence pointer (source record + claim sentence).
+- **`region_signals`** — the two-signal table, **one row per region per geo level** (pincode/city/district/state),
+  built on the **NFHS 706-district spine** (181 districts have zero facilities — exactly the data-poor case).
+  **District-name harmonization** via state+district alias maps reaches **~98% facility attribution**.
+- **Fan-out fix** — bronze is deduped to one row per `unique_id` *before* the city/pincode joins, so the
+  region grain matches `gold.facility` (9,989) instead of inflating; verified by `tests/region_signals_assertions.sql`.
+- **Claim verification** — `fn_verify_capability` adjudicates a claim against the facility profile
+  (`ai_query`): in a spot-check, 15 C-section-claimed facilities → 14 credible / 1 uncertain / 0 false-positive,
+  and an eye hospital claiming C-sections is correctly marked **not-credible**.
+- **Result (national, district level):** **194 REAL deserts · 206 DATA-POOR · 306 adequately served** — the
+  data-poor bucket (avg 0.8 facilities, 0.10 confidence) is precisely what a single-score tool would mislabel.
+
+---
+
 ## Databricks technologies & models
 
 **Platform & governance**
