@@ -158,8 +158,10 @@ data_confidence_score       = 0.40 * count_score + 0.25 * high_conf_share
 
 ## Submission requirements (keep the repo ready)
 
-Public GitHub repo (public ≥30 days) with architecture diagram and a README
-covering: what it does (1–2 sentences), architecture, exact run commands, demo
-steps. Plus a ≤500-char write-up, list of Databricks tech + OSS/partner models
-used, a ≤2-minute demo video, and a deployed-prototype link. Judges reproduce
-from a clean clone — keep `databricks bundle deploy -t prod` working end to end.
+Public, **open-source-licensed** GitHub repo that shows the project was **built during the
+Project Period** (June 15 8am PT – June 16 2:30pm PT) — *new projects only; not created before
+the event* (Official Rules 4.2(d), 4.3(d)). README covers: what it does (1–2 sentences),
+architecture diagram, exact run commands, demo steps. Plus a ≤500-char write-up, list of
+Databricks tech + OSS/partner models used, a **≤3-minute** demo video (YouTube/Vimeo, public),
+and a deployed-prototype link with test access. Judges reproduce from a clean clone — keep
+`databricks bundle deploy -t prod` working end to end.
