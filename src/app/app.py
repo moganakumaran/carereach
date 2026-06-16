@@ -200,10 +200,31 @@ def pg_connect():
 
 # --------------------------------------------------------------------------- UI
 theme.render_hero()
-st.caption("Turning **10,000 messy facility records** into maternal-health deployment decisions a planner can trust — "
-           "*extract structure · show evidence · communicate uncertainty honestly · persist the plan*. "
-           "Two signals, never collapsed: **where the care gaps are** × **how confident we are they're real, not just data-poor**.")
 
+# ---- Care domain (specialty) ----------------------------------------------------------------
+# Maternal & newborn is LIVE (grounded on NFHS-5 burden). The engine is specialty-agnostic, so
+# other domains are shown as an honest roadmap state rather than maternal numbers under a wrong label.
+SPECIALTIES = {"Maternal & newborn": True, "General surgery": False, "Pediatrics": False, "Cardiac care": False}
+st.sidebar.markdown("### 🩺 Care domain")
+specialty = st.sidebar.selectbox(
+    "Specialty", list(SPECIALTIES.keys()), index=0,
+    format_func=lambda k: f"{k}  ·  {'Live' if SPECIALTIES[k] else 'Roadmap'}")
+if SPECIALTIES[specialty]:
+    st.sidebar.caption("Live — grounded on NFHS-5 district maternal-health burden.")
+else:
+    st.markdown(f"### 🚧 {specialty} — on the roadmap")
+    st.info(
+        "**Same engine, a different domain.** CareReach is specialty-agnostic: LLM capability "
+        "extraction → per-claim verification → the two-signal score (care gap × evidence confidence) "
+        "applies to any service line.\n\n"
+        "**Maternal & newborn** is live today because **NFHS-5** gives district-level *maternal-health "
+        f"burden* to ground the demand side. **{specialty}** needs an equivalent burden signal "
+        "(e.g. surgical-need or disease-prevalence estimates) before its gaps can be scored honestly — "
+        "that's data wiring, not a rewrite.")
+    st.caption("← Select **Maternal & newborn** in the sidebar to use the live model.")
+    st.stop()
+
+st.sidebar.divider()
 level = st.sidebar.radio("Geography level", ["district", "state", "city", "pincode"], index=0)
 df = load_level(level)
 states = ["(all)"] + sorted(df["state_ut"].dropna().unique().tolist())
@@ -460,5 +481,9 @@ with st.expander("ℹ️  How CareReach maps to the brief & runs on Databricks")
         "- **Persist the work** — plans + the agent's recommendation are saved to **Lakebase** (serverless Postgres).\n\n"
         "**Built on Databricks Free Edition:** Unity Catalog (bronze→silver→gold) · `ai_query` extraction & verification · "
         "Mosaic AI **Vector Search** · **Agent Bricks** supervisor · **Lakebase** persistence · hosted **Databricks App**. "
-        "Capabilities are treated as *claims to verify, not ground truth* — an LLM auditor adjudicates each one."
+        "Capabilities are treated as *claims to verify, not ground truth* — an LLM auditor adjudicates each one.\n\n"
+        "**Generalizes beyond maternal care.** The engine is specialty-agnostic (see the *Care domain* selector). "
+        "Maternal & newborn is the live vertical because NFHS-5 supplies real district-level burden to ground demand; "
+        "adding surgery, pediatrics or cardiac care is a matter of wiring in each domain's burden signal — no rewrite of "
+        "the extraction, verification, or two-signal scoring."
     )
