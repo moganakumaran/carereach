@@ -185,6 +185,34 @@ table a planner can trust. *(SQL in `src/pipelines/{bronze,silver,gold}`; every 
 
 ---
 
+## Voice & translation — how it works
+
+A planner can ask by voice in their own Indian language. The flow spans three places — the browser,
+a speech recognizer, and Databricks — with a clear trust boundary (code in `src/app/app.py`):
+
+```
+You speak → [browser captures audio] → [transcribe to native text] → [translate to English on Databricks] → [grounded answer]
+ (Hindi)      streamlit-mic-recorder       free speech recognizer          llama-3-3-70b chat endpoint        over region_signals
+```
+
+1. **Pick the language** — the dropdown maps to a BCP-47 code (`Hindi → hi-IN`, `Bengali → bn-IN`, …),
+   telling the recognizer what to expect.
+2. **Capture (browser)** — `mic_recorder` records in Chrome/Edge and returns WAV bytes + a recording id;
+   nothing leaves the browser until you hit Stop. The app acts only on a *new* recording id.
+3. **Transcribe to native text** — `transcribe_audio()` runs the audio through a free speech recognizer
+   for the chosen language, inside a spinner; a failed clip shows a "try again" prompt, never silence.
+4. **Translate on Databricks** — `translate_to_english()` calls the **chat-completions endpoint**
+   (`llama-3-3-70b`) with a **system** message ("translation engine — output only the English, don't
+   answer it") + the native text as the **user** message. The system/user split is what stops the model
+   from *answering* the question instead of translating it.
+5. **Show & answer** — the app displays *Heard (lang): … → English: …*, fills the question box, and feeds
+   the same grounded planner path used everywhere else (`mdp.gold.region_signals`).
+
+**Trust boundary:** browser = capture only; the *speech-to-text* step uses a free best-effort recognizer
+(the one non-Databricks dependency); **translation and the answer both run on Databricks** (text only, no
+audio). Production would swap step 3 for a hosted Whisper endpoint — the rest is unchanged. Note: the
+dropdown language must match what's spoken, and short clear sentences transcribe most reliably.
+
 ## Databricks technologies & models
 
 **Platform & governance**
