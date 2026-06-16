@@ -130,23 +130,38 @@ def supervisor_answer(question: str):
 
 def pg_connect():
     """Connect to Lakebase. The `database` app-resource binding injects PGHOST/PGUSER/PGPORT/
-    PGDATABASE/PGSSLMODE (PGUSER = the SP's federated Postgres role) but NOT a password, so we
-    mint a short-lived OAuth token as the password. Use PGUSER from the binding (authoritative),
-    NOT current_user — they differ for a service principal."""
+    PGDATABASE/PGSSLMODE but NOT a password, so we mint a short-lived OAuth token as the password.
+    Auth is identity-based: the username MUST match the identity the token was minted for. The
+    token is minted by the app's own service principal, so `current_user.me()` (the SP's app id)
+    is the authoritative username — it's the federated Postgres role that actually exists. We try
+    that first, then fall back to the binding's PGUSER in case the platform differs."""
     import psycopg2
     token = w().database.generate_database_credential(
         request_id=str(uuid.uuid4()), instance_names=[PG_INSTANCE]).token
     host = os.environ.get("PGHOST")
-    if host:
-        user = os.environ.get("PGUSER")
-        pw = os.environ.get("PGPASSWORD") or token
-        return psycopg2.connect(host=host, port=os.environ.get("PGPORT", "5432"),
-            dbname=os.environ.get("PGDATABASE", PG_DATABASE), user=user, password=pw,
-            sslmode=os.environ.get("PGSSLMODE", "require")), f"binding(user={user})"
-    inst = w().database.get_database_instance(name=PG_INSTANCE)
-    user = os.environ.get("PGUSER") or w().current_user.me().user_name
-    return psycopg2.connect(host=inst.read_write_dns, port=5432, dbname=PG_DATABASE,
-        user=user, password=token, sslmode="require"), f"generated(user={user})"
+    if not host:
+        host = w().database.get_database_instance(name=PG_INSTANCE).read_write_dns
+    port = os.environ.get("PGPORT", "5432")
+    dbname = os.environ.get("PGDATABASE", PG_DATABASE)
+    sslmode = os.environ.get("PGSSLMODE", "require")
+    try:
+        token_identity = w().current_user.me().user_name
+    except Exception:
+        token_identity = None
+    # Candidate usernames in priority order: token's own identity, then binding PGUSER.
+    candidates, seen = [], set()
+    for u in (token_identity, os.environ.get("PGUSER")):
+        if u and u not in seen:
+            candidates.append(u); seen.add(u)
+    last_err = None
+    for user in candidates:
+        try:
+            conn = psycopg2.connect(host=host, port=port, dbname=dbname, user=user,
+                                    password=token, sslmode=sslmode)
+            return conn, f"ok(user={user})"
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(f"Lakebase auth failed for users {candidates}: {last_err}")
 
 
 # --------------------------------------------------------------------------- UI
