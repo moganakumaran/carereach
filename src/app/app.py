@@ -218,32 +218,56 @@ LANGS = {"Hindi": "hi-IN", "Maithili / Bhojpuri (→ Hindi)": "hi-IN", "Bengali"
 if "aq_input" not in st.session_state:
     st.session_state["aq_input"] = DEFAULT_Q
 try:
-    from streamlit_mic_recorder import speech_to_text
+    from streamlit_mic_recorder import mic_recorder
     _has_voice = True
 except Exception:
     _has_voice = False
+
+
+def transcribe_audio(audio: dict, bcp47: str) -> str:
+    """Transcribe a recorded WAV clip. Raises on failure so the caller can give feedback —
+    unlike the component's speech_to_text(), which swallows every error and returns None."""
+    from speech_recognition import Recognizer, AudioData
+    ad = AudioData(audio["bytes"], audio["sample_rate"], audio["sample_width"])
+    return Recognizer().recognize_google(ad, language=bcp47)
+
 
 if _has_voice:
     vc1, vc2 = st.columns([2, 3])
     with vc1:
         lang_label = st.selectbox("🎤 Speak your question in", list(LANGS.keys()), index=0)
     with vc2:
-        st.caption("Tap, ask in your language, tap stop — we transcribe and translate to English.")
-        spoken = speech_to_text(language=LANGS[lang_label], start_prompt="🎤 Record question",
-                                stop_prompt="⏹ Stop", just_once=True, use_container_width=True, key="stt")
-    if spoken:
-        st.session_state["native_q"] = spoken
-        st.session_state["native_lang"] = lang_label
-        if lang_label == "English":
-            st.session_state["voice_en"] = spoken
+        st.caption("Tap **Record**, ask a short clear sentence, tap **Stop** — we transcribe and translate.")
+        audio = mic_recorder(start_prompt="🎤 Record question", stop_prompt="⏹ Stop (transcribe)",
+                             just_once=True, use_container_width=True, format="wav", key="mic")
+    # Only act on a *new* recording (mic_recorder returns the clip once, with a monotonic id).
+    if audio and audio.get("id") and audio["id"] != st.session_state.get("last_mic_id"):
+        st.session_state["last_mic_id"] = audio["id"]
+        st.session_state.pop("voice_error", None)
+        with st.spinner("Transcribing your question…"):
+            try:
+                native = transcribe_audio(audio, LANGS[lang_label])
+            except Exception:
+                native = None
+        if not native:
+            st.session_state["voice_error"] = True
+            st.session_state.pop("native_q", None)
         else:
-            with st.spinner("Translating to English on Databricks…"):
-                try:
-                    st.session_state["voice_en"] = translate_to_english(spoken, lang_label)
-                except Exception as e:
-                    st.session_state["voice_en"] = spoken
-                    st.warning(f"Translation unavailable ({e}); using the original text.")
-        st.session_state["aq_input"] = st.session_state["voice_en"]  # push into the question box
+            st.session_state["native_q"] = native
+            st.session_state["native_lang"] = lang_label
+            if lang_label == "English":
+                st.session_state["voice_en"] = native
+            else:
+                with st.spinner("Translating to English on Databricks…"):
+                    try:
+                        st.session_state["voice_en"] = translate_to_english(native, lang_label)
+                    except Exception as e:
+                        st.session_state["voice_en"] = native
+                        st.warning(f"Translation unavailable ({e}); using the original text.")
+            st.session_state["aq_input"] = st.session_state["voice_en"]  # push into the question box
+    if st.session_state.get("voice_error"):
+        st.warning("Couldn't transcribe that clip. Please try again — speak a clear, short sentence, "
+                   "allow microphone access, and pick the language you're speaking. (Free recognition is best-effort.)")
     if st.session_state.get("native_q"):
         st.markdown(f"**Heard ({st.session_state.get('native_lang','?').split(' ')[0]}):** {st.session_state['native_q']}")
         if st.session_state.get("voice_en") and st.session_state["voice_en"] != st.session_state["native_q"]:
